@@ -1,10 +1,57 @@
 # -*- coding: utf-8 -*-
 
+import os
+
 import bpy
 from bpy.types import PropertyGroup
 from bpy.props import BoolProperty, EnumProperty, FloatProperty, FloatVectorProperty, IntProperty, StringProperty
 
 from mmd_tools.core import material
+from mmd_tools.core.material import FnMaterial
+
+
+def _updateAmbientColor(prop, context):
+    FnMaterial(prop.id_data).update_ambient_color()
+
+def _updateDiffuseColor(prop, context):
+    FnMaterial(prop.id_data).update_diffuse_color()
+
+def _updateAlpha(prop, context):
+    FnMaterial(prop.id_data).update_alpha()
+
+def _updateSpecularColor(prop, context):
+    FnMaterial(prop.id_data).update_specular_color()
+
+def _updateShininess(prop, context):
+    FnMaterial(prop.id_data).update_shininess()
+
+def _updateIsDoubleSided(prop, context):
+    FnMaterial(prop.id_data).update_is_double_sided()
+
+def _updateSphereMapType(prop, context):
+    FnMaterial(prop.id_data).update_sphere_texture_type()
+
+def _updateToonTexture(prop, context):
+    FnMaterial(prop.id_data).update_toon_texture()
+
+def _updateDropShadow(prop, context):
+    FnMaterial(prop.id_data).update_drop_shadow()
+
+def _updateSelfShadowMap(prop, context):
+    FnMaterial(prop.id_data).update_self_shadow_map()
+
+def _updateSelfShadow(prop, context):
+    FnMaterial(prop.id_data).update_self_shadow()
+
+def _updateEnabledToonEdge(prop, context):
+    FnMaterial(prop.id_data).update_enabled_toon_edge()
+
+def _updateEdgeColor(prop, context):
+    FnMaterial(prop.id_data).update_edge_color()
+
+def _updateEdgeWeight(prop, context):
+    FnMaterial(prop.id_data).update_edge_weight()
+
 
 #===========================================
 # Property classes
@@ -30,44 +77,93 @@ class MMDMaterial(PropertyGroup):
         )
 
     ambient_color = FloatVectorProperty(
-        name='Ambient',
+        name='Ambient Color',
         subtype='COLOR',
         size=3,
         min=0,
         max=1,
         precision=3,
         step=0.1,
-        default=[0, 0, 0],
+        default=[0.4, 0.4, 0.4],
+        update=_updateAmbientColor,
+        )
+
+    diffuse_color = FloatVectorProperty(
+        name='Diffuse Color',
+        subtype='COLOR',
+        size=3,
+        min=0,
+        max=1,
+        precision=3,
+        step=0.1,
+        default=[0.8, 0.8, 0.8],
+        update=_updateDiffuseColor,
+        )
+
+    alpha = FloatProperty(
+        name='Alpha',
+        min=0,
+        max=1,
+        precision=3,
+        step=0.1,
+        default=1.0,
+        update=_updateAlpha,
+        )
+
+    specular_color = FloatVectorProperty(
+        name='Specular Color',
+        subtype='COLOR',
+        size=3,
+        min=0,
+        max=1,
+        precision=3,
+        step=0.1,
+        default=[1.0, 1.0, 1.0],
+        update=_updateSpecularColor,
+        )
+
+    shininess = FloatProperty(
+        name='Shininess',
+        min=0,
+        soft_max=512,
+        step=100.0,
+        default=50.0,
+        update=_updateShininess,
         )
 
     is_double_sided = BoolProperty(
         name='Double Sided',
         description='',
         default=True,
+        update=_updateIsDoubleSided,
         )
 
     enabled_drop_shadow = BoolProperty(
         name='Drop Shadow',
         description='',
         default=True,
+        update=_updateDropShadow,
         )
 
     enabled_self_shadow_map = BoolProperty(
         name='Self Shadow Map',
         description='',
         default=True,
+        update=_updateSelfShadowMap,
         )
 
     enabled_self_shadow = BoolProperty(
         name='Self Shadow',
         description='',
         default=True,
+        update=_updateSelfShadow,
         )
 
     enabled_toon_edge = BoolProperty(
         name='Toon Edge',
         description='',
-        default=True,
+        default=False,
+        update=_updateEnabledToonEdge,
         )
 
     edge_color = FloatVectorProperty(
@@ -79,14 +175,17 @@ class MMDMaterial(PropertyGroup):
         precision=3,
         step=0.1,
         default=[0, 0, 0, 1],
+        update=_updateEdgeColor,
         )
 
     edge_weight = FloatProperty(
         name='Edge Weight',
         min=0,
         max=100,
-        step=0.1,
+        soft_max=2,
+        step=1.0,
         default=0.5,
+        update=_updateEdgeWeight,
         )
 
     sphere_texture_type = EnumProperty(
@@ -98,12 +197,14 @@ class MMDMaterial(PropertyGroup):
             (str(material.SPHERE_MODE_ADD),    'Add',        '', 3),
             (str(material.SPHERE_MODE_SUBTEX), 'SubTexture', '', 4),
             ],
+        update=_updateSphereMapType,
         )
 
     is_shared_toon_texture = BoolProperty(
         name='Use Shared Toon Texture',
         description='',
         default=False,
+        update=_updateToonTexture,
         )
 
     toon_texture = StringProperty(
@@ -111,12 +212,16 @@ class MMDMaterial(PropertyGroup):
         subtype='FILE_PATH',
         description='',
         default='',
+        update=_updateToonTexture,
         )
 
     shared_toon_texture = IntProperty(
         name='Shared Toon Texture',
         description='',
         default=0,
+        min=0,
+        max=9,
+        update=_updateToonTexture,
         )
 
     comment = StringProperty(

@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
 
+import logging
 import bpy
+from bpy.types import AddonPreferences
+from bpy.props import StringProperty
 
 from . import properties
 from . import operators
@@ -35,6 +38,27 @@ bl_info= {
 #     if "auto_scene_setup" in locals():
 #         imp.reload(auto_scene_setup)
 
+logging.basicConfig(format='%(message)s')
+
+def addon_preferences(attrname, default=None):
+    addon = bpy.context.user_preferences.addons.get(__name__, None)
+    return getattr(addon.preferences, attrname, default) if addon else default
+
+class MMDToolsAddonPreferences(AddonPreferences):
+    # this must match the addon name, use '__package__'
+    # when defining this in a submodule of a python package.
+    bl_idname = __name__
+
+    shared_toon_folder = StringProperty(
+            name="Shared Toon Texture Folder",
+            subtype='DIR_PATH',
+            )
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "shared_toon_folder")
+
+
 def menu_func_import(self, context):
     self.layout.operator(operators.fileio.ImportPmx.bl_idname, text="MikuMikuDance Model (.pmd, .pmx)")
     self.layout.operator(operators.fileio.ImportVmd.bl_idname, text="MikuMikuDance Motion (.vmd)")
@@ -56,6 +80,7 @@ def register():
 def unregister():
     bpy.types.INFO_MT_file_import.remove(menu_func_import)
     bpy.types.INFO_MT_file_export.remove(menu_func_export)
+    bpy.types.INFO_MT_armature_add.remove(menu_func_armature)
     properties.unregister()
     bpy.utils.unregister_module(__name__)
 

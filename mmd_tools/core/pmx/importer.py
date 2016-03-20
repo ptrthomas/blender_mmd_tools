@@ -22,6 +22,23 @@ class PMXImporter:
         [0.0, 0.0, 1.0, 0.0],
         [0.0, 1.0, 0.0, 0.0],
         [0.0, 0.0, 0.0, 1.0]])
+    CATEGORIES = {
+        0: 'SYSTEM',
+        1: 'EYEBROW',
+        2: 'EYE',
+        3: 'MOUTH',
+        }
+    MORPH_TYPES = {
+        0: 'group_morphs',
+        1: 'vertex_morphs',
+        2: 'bone_morphs',
+        3: 'uv_morphs',
+        4: 'uv_morphs',
+        5: 'uv_morphs',
+        6: 'uv_morphs',
+        7: 'uv_morphs',
+        8: 'material_morphs',
+        }
 
     def __init__(self):
         self.__model = None
@@ -32,28 +49,16 @@ class PMXImporter:
         self.__root = None
         self.__armObj = None
         self.__meshObj = None
-        self.__rigidsSetObj = None
-        self.__jointsSetObj = None
 
-        self.__vertexTable = None
         self.__vertexGroupTable = None
         self.__textureTable = None
 
-        self.__mutedIkConsts = []
         self.__boneTable = []
         self.__rigidTable = []
-        self.__nonCollisionJointTable = None
-        self.__jointTable = []
         self.__materialTable = []
+        self.__imageTable = {}
 
         self.__materialFaceCountTable = None
-
-        # object groups
-        self.__allObjGroup = None    # a group which contains all objects created for the target model by mmd_tools.
-        self.__mainObjGroup = None    # a group which contains armature and mesh objects.
-        self.__rigidObjGroup = None  # a group which contains objects of rigid bodies imported from a pmx model.
-        self.__jointObjGroup = None  # a group which contains objects of joints imported from a pmx model.
-        self.__tempObjGroup = None   # a group which contains temporary objects.
 
     @staticmethod
     def flipUV_V(uv):
@@ -73,27 +78,24 @@ class PMXImporter:
         """
         pmxModel = self.__model
         self.__rig = mmd_model.Model.create(pmxModel.name, pmxModel.name_e, self.__scale)
-
-        mesh = bpy.data.meshes.new(name=pmxModel.name)
-        self.__meshObj = bpy.data.objects.new(name=pmxModel.name+'_mesh', object_data=mesh)
-        self.__targetScene.objects.link(self.__meshObj)
+        mmd_root = self.__rig.rootObject().mmd_root
+        txt = bpy.data.texts.new(pmxModel.name+'_comment')
+        txt.from_string(pmxModel.comment.replace('\r', ''))
+        txt.current_line_index = 0
+        mmd_root.comment_text = txt.name
+        txt = bpy.data.texts.new(pmxModel.name+'_comment_e')
+        txt.from_string(pmxModel.comment_e.replace('\r', ''))
+        txt.current_line_index = 0
+        mmd_root.comment_e_text = txt.name
 
         self.__armObj = self.__rig.armature()
         self.__armObj.hide = True
-        self.__meshObj.parent = self.__armObj
 
-    def __createGroups(self):
-        pmxModel = self.__model
-        self.__mainObjGroup = bpy.data.groups.new(name='mmd_tools.' + pmxModel.name)
-        logging.debug('Create main group: %s', self.__mainObjGroup.name)
-        self.__allObjGroup = bpy.data.groups.new(name='mmd_tools.' + pmxModel.name + '_all')
-        logging.debug('Create all group: %s', self.__allObjGroup.name)
-        self.__rigidObjGroup = bpy.data.groups.new(name='mmd_tools.' + pmxModel.name + '_rigids')
-        logging.debug('Create rigid group: %s', self.__rigidObjGroup.name)
-        self.__jointObjGroup = bpy.data.groups.new(name='mmd_tools.' + pmxModel.name + '_joints')
-        logging.debug('Create joint group: %s', self.__jointObjGroup.name)
-        self.__tempObjGroup = bpy.data.groups.new(name='mmd_tools.' + pmxModel.name + '_temp')
-        logging.debug('Create temporary group: %s', self.__tempObjGroup.name)
+    def __createMeshObject(self):
+        model_name = self.__model.name
+        self.__meshObj = bpy.data.objects.new(name=model_name+'_mesh', object_data=bpy.data.meshes.new(name=model_name))
+        self.__meshObj.parent = self.__armObj
+        self.__targetScene.objects.link(self.__meshObj)
 
     def __importVertexGroup(self):
         self.__vertexGroupTable = []
@@ -111,13 +113,15 @@ class PMXImporter:
             bv = mesh.vertices[i]
 
             bv.co = mathutils.Vector(pv.co) * self.TO_BLE_MATRIX * self.__scale
-            bv.normal = pv.normal
+            #bv.normal = pv.normal # no effect
 
             if isinstance(pv.weight.weights, pmx.BoneWeightSDEF):
                 self.__vertexGroupTable[pv.weight.bones[0]].add(index=[i], weight=pv.weight.weights.weight, type='REPLACE')
                 self.__vertexGroupTable[pv.weight.bones[1]].add(index=[i], weight=1.0-pv.weight.weights.weight, type='REPLACE')
             elif len(pv.weight.bones) == 1:
-                self.__vertexGroupTable[pv.weight.bones[0]].add(index=[i], weight=1.0, type='REPLACE')
+                bone_index = pv.weight.bones[0]
+                if bone_index >= 0:
+                    self.__vertexGroupTable[bone_index].add(index=[i], weight=1.0, type='REPLACE')
             elif len(pv.weight.bones) == 2:
                 self.__vertexGroupTable[pv.weight.bones[0]].add(index=[i], weight=pv.weight.weights[0], type='REPLACE')
                 self.__vertexGroupTable[pv.weight.bones[1]].add(index=[i], weight=1.0-pv.weight.weights[0], type='REPLACE')
@@ -209,13 +213,8 @@ class PMXImporter:
         target_bone = pose_bones[index]
 
         ikConst = self.__rig.create_ik_constraint(ik_bone, target_bone)
-        ikConst.mute = True
-        self.__mutedIkConsts.append(ikConst)
         ikConst.iterations = pmx_bone.loopCount
         ikConst.chain_count = len(pmx_bone.ik_links)
-        if pmx_bone.isRotatable and not pmx_bone.isMovable :
-            ikConst.use_location = pmx_bone.isMovable
-            ikConst.use_rotation = pmx_bone.isRotatable
         for i in pmx_bone.ik_links:
             if i.maximumAngle is not None:
                 bone = pose_bones[i.target]
@@ -239,6 +238,7 @@ class PMXImporter:
         for i, pmx_bone in sorted(enumerate(pmxModel.bones), key=lambda x: x[1].transform_order):
             # variable p_bone renamed to pmx_bone to avoid confusion with Pose Bones
             b_bone = pose_bones[i]
+            b_bone.mmd_bone.name_j = pmx_bone.name
             b_bone.mmd_bone.name_e = pmx_bone.name_e
             b_bone.mmd_bone.transform_order = pmx_bone.transform_order
             b_bone.mmd_bone.is_visible = pmx_bone.visible
@@ -330,16 +330,12 @@ class PMXImporter:
                 bone = None if rigid.bone == -1 or rigid.bone is None else self.__boneTable[rigid.bone].name,
                 )
             obj.hide = True
-            self.__rigidObjGroup.objects.link(obj)
             self.__rigidTable.append(obj)
 
-        for c in self.__mutedIkConsts:
-            c.mute = False
         logging.debug('Finished importing rigid bodies in %f seconds.', time.time() - start_time)
 
 
     def __importJoints(self):
-        self.__jointTable = []
         for joint in self.__model.joints:
             loc = mathutils.Vector(joint.location) * self.TO_BLE_MATRIX * self.__scale
             rot = mathutils.Vector(joint.rotation) * self.TO_BLE_MATRIX * -1
@@ -354,14 +350,12 @@ class PMXImporter:
                 rigid_b = self.__rigidTable[joint.dest_rigid],
                 maximum_location = mathutils.Vector(joint.maximum_location) * self.TO_BLE_MATRIX * self.__scale,
                 minimum_location = mathutils.Vector(joint.minimum_location) * self.TO_BLE_MATRIX * self.__scale,
-                maximum_rotation = mathutils.Vector(joint.maximum_rotation) * self.TO_BLE_MATRIX * -1,
-                minimum_rotation = mathutils.Vector(joint.minimum_rotation) * self.TO_BLE_MATRIX * -1,
+                maximum_rotation = mathutils.Vector(joint.minimum_rotation) * self.TO_BLE_MATRIX * -1,
+                minimum_rotation = mathutils.Vector(joint.maximum_rotation) * self.TO_BLE_MATRIX * -1,
                 spring_linear = mathutils.Vector(joint.spring_constant) * self.TO_BLE_MATRIX,
                 spring_angular = mathutils.Vector(joint.spring_rotation_constant) * self.TO_BLE_MATRIX,
                 )
             obj.hide = True
-            self.__jointTable.append(obj)
-            self.__jointObjGroup.objects.link(obj)
 
 
     def __importMaterials(self):
@@ -376,15 +370,7 @@ class PMXImporter:
             mmd_mat = mat.mmd_material
             mat.diffuse_color = i.diffuse[0:3]
             mat.alpha = i.diffuse[3]
-            mat.specular_color = i.specular[0:3]
-            mat.specular_alpha = i.specular[3]
-            mat.use_shadows = i.enabled_self_shadow
-            mat.use_transparent_shadows = i.enabled_self_shadow
-            mat.use_cast_buffer_shadows = i.enabled_self_shadow_map # only buffer shadows
-            if hasattr(mat, 'use_cast_shadows'):
-                # "use_cast_shadows" is not supported in older Blender (< 2.71),
-                # so we still use "use_cast_buffer_shadows".
-                mat.use_cast_shadows = i.enabled_self_shadow_map
+            mat.specular_color = i.specular
             if mat.alpha < 1.0 or mat.specular_alpha < 1.0 or i.texture != -1:
                 mat.use_transparency = True
                 mat.transparency_method = 'Z_TRANSPARENCY'
@@ -392,6 +378,10 @@ class PMXImporter:
             mmd_mat.name_j = i.name
             mmd_mat.name_e = i.name_e
             mmd_mat.ambient_color = i.ambient
+            mmd_mat.diffuse_color = i.diffuse[0:3]
+            mmd_mat.alpha = i.diffuse[3]
+            mmd_mat.specular_color = i.specular
+            mmd_mat.shininess = i.shininess
             mmd_mat.is_double_sided = i.is_double_sided
             mmd_mat.enabled_drop_shadow = i.enabled_drop_shadow
             mmd_mat.enabled_self_shadow_map = i.enabled_self_shadow_map
@@ -420,18 +410,14 @@ class PMXImporter:
             if i.texture != -1:
                 texture_slot = fnMat.create_texture(self.__textureTable[i.texture])
                 texture_slot.texture.use_mipmap = self.__use_mipmap
+                self.__imageTable[len(self.__materialTable)-1] = texture_slot.texture.image
             if i.sphere_texture_mode == 2:
                 amount = self.__spa_blend_factor
-                blend = 'ADD'
             else:
                 amount = self.__sph_blend_factor
-                blend = 'MULTIPLY'
             if i.sphere_texture != -1 and amount != 0.0:
                 texture_slot = fnMat.create_sphere_texture(self.__textureTable[i.sphere_texture])
-                if isinstance(texture_slot.texture.image, bpy.types.Image):
-                    texture_slot.texture.image.use_alpha = False
                 texture_slot.diffuse_color_factor = amount
-                texture_slot.blend_type = blend
 
     def __importFaces(self):
         pmxModel = self.__model
@@ -443,25 +429,21 @@ class PMXImporter:
             bf = mesh.tessfaces[i]
             bf.vertices_raw = list(f) + [0]
             bf.use_smooth = True
-            face_count = 0
+
             uv = uvLayer.data[i]
             uv.uv1 = self.flipUV_V(pmxModel.vertices[f[0]].uv)
             uv.uv2 = self.flipUV_V(pmxModel.vertices[f[1]].uv)
             uv.uv3 = self.flipUV_V(pmxModel.vertices[f[2]].uv)
 
             bf.material_index = self.__getMaterialIndexFromFaceIndex(i)
+            uv.image = self.__imageTable.get(bf.material_index, None)
 
     def __importVertexMorphs(self):
         pmxModel = self.__model
         mmd_root = self.__rig.rootObject().mmd_root
         utils.selectAObject(self.__meshObj)
         bpy.ops.object.shape_key_add()
-        categories = {
-            0: 'SYSTEM',
-            1: 'EYEBROW',
-            2: 'EYE',
-            3: 'MOUTH',
-            }
+        categories = self.CATEGORIES
         for morph in filter(lambda x: isinstance(x, pmx.VertexMorph), pmxModel.morphs):
             shapeKey = self.__meshObj.shape_key_add(morph.name)
             vtx_morph = mmd_root.vertex_morphs.add()
@@ -475,12 +457,7 @@ class PMXImporter:
 
     def __importMaterialMorphs(self):
         mmd_root = self.__rig.rootObject().mmd_root
-        categories = {
-            0: 'SYSTEM',
-            1: 'EYEBROW',
-            2: 'EYE',
-            3: 'MOUTH',
-            }
+        categories = self.CATEGORIES
         for morph in [x for x in self.__model.morphs if isinstance(x, pmx.MaterialMorph)]:
             mat_morph = mmd_root.material_morphs.add()
             mat_morph.name = morph.name
@@ -492,6 +469,7 @@ class PMXImporter:
                 data.offset_type = ['MULT', 'ADD'][morph_data.offset_type]
                 data.diffuse_color = morph_data.diffuse_offset
                 data.specular_color = morph_data.specular_offset
+                data.shininess = morph_data.shininess_offset
                 data.ambient_color = morph_data.ambient_offset
                 data.edge_color = morph_data.edge_color_offset
                 data.edge_weight = morph_data.edge_size_offset
@@ -501,12 +479,7 @@ class PMXImporter:
 
     def __importBoneMorphs(self):
         mmd_root = self.__rig.rootObject().mmd_root
-        categories = {
-            0: 'SYSTEM',
-            1: 'EYEBROW',
-            2: 'EYE',
-            3: 'MOUTH',
-            }
+        categories = self.CATEGORIES
         for morph in [x for x in self.__model.morphs if isinstance(x, pmx.BoneMorph)]:
             bone_morph = mmd_root.bone_morphs.add()
             bone_morph.name = morph.name
@@ -520,20 +493,49 @@ class PMXImporter:
                 data.location = mat * mathutils.Vector(morph_data.location_offset) * self.__scale
                 data.rotation = VMDImporter.convertVMDBoneRotationToBlender(bl_bone, morph_data.rotation_offset)
 
+    def __importUVMorphs(self):
+        mmd_root = self.__rig.rootObject().mmd_root
+        categories = self.CATEGORIES
+        for morph in [x for x in self.__model.morphs if isinstance(x, pmx.UVMorph)]:
+            uv_morph = mmd_root.uv_morphs.add()
+            uv_morph.name = morph.name
+            uv_morph.name_e = morph.name_e
+            uv_morph.category = categories.get(morph.category, 'OTHER')
+            uv_morph.uv_index = morph.uv_index
+            for morph_data in morph.offsets:
+                idx = morph_data.index
+                dx, dy, dz, dw = morph_data.offset
+                data = uv_morph.data.add()
+                data.index = idx
+                data.offset = (dx, -dy, dz, dw) # dz, dw are not used
+
+    def __importGroupMorphs(self):
+        mmd_root = self.__rig.rootObject().mmd_root
+        categories = self.CATEGORIES
+        morph_types = self.MORPH_TYPES
+        pmx_morphs = self.__model.morphs
+        for morph in [x for x in pmx_morphs if isinstance(x, pmx.GroupMorph)]:
+            group_morph = mmd_root.group_morphs.add()
+            group_morph.name = morph.name
+            group_morph.name_e = morph.name_e
+            group_morph.category = categories.get(morph.category, 'OTHER')
+            for morph_data in morph.offsets:
+                data = group_morph.data.add()
+                m = pmx_morphs[morph_data.morph]
+                data.name = m.name
+                data.morph_type = morph_types[m.type_index()]
+                data.factor = morph_data.factor
+
     def __importDisplayFrames(self):
         pmxModel = self.__model
         root = self.__rig.rootObject()
-        categories = {
-            0: 'SYSTEM',
-            1: 'EYEBROW',
-            2: 'EYE',
-            3: 'MOUTH',
-            }
+        morph_types = self.MORPH_TYPES
 
         for i in pmxModel.display:
             frame = root.mmd_root.display_item_frames.add()
             frame.name = i.name
             frame.name_e = i.name_e
+            frame.is_special = i.isSpecial
             for disp_type, index in i.data:
                 item = frame.items.add()
                 if disp_type == 0:
@@ -543,22 +545,31 @@ class PMXImporter:
                     item.type = 'MORPH'
                     morph = pmxModel.morphs[index]
                     item.name = morph.name
-                    item.morph_category = categories.get(morph.category, 'OTHER')
+                    item.morph_type = morph_types[morph.type_index()]
                 else:
                     raise Exception('Unknown display item type.')
-        root.mmd_root.display_item_frames
 
     def __addArmatureModifier(self, meshObj, armObj):
         armModifier = meshObj.modifiers.new(name='Armature', type='ARMATURE')
         armModifier.object = armObj
         armModifier.use_vertex_groups = True
 
+    def __assignCustomNormals(self):
+        mesh = self.__meshObj.data
+        if not hasattr(mesh, 'has_custom_normals'):
+            logging.info(' * No support for custom normals!!')
+            return
+        logging.info('Setting custom normals!!')
+        custom_normals = [(mathutils.Vector(v.normal).xzy).normalized() for v in self.__model.vertices]
+        mesh.normals_split_custom_set_from_vertices(custom_normals)
+        mesh.use_auto_smooth = True
+        logging.info('   - Done!!')
+
     def __renameLRBones(self):
         pose_bones = self.__armObj.pose.bones
         for i in pose_bones:
             if i.is_mmd_shadow_bone:
                 continue
-            i.mmd_bone.name_j = i.name
             self.__rig.renameBone(i.name, utils.convertNameToLR(i.name))
             # self.__meshObj.vertex_groups[i.mmd_bone.name_j].name = i.name
 
@@ -568,8 +579,8 @@ class PMXImporter:
         else:
             self.__model = pmx.load(args['filepath'])
 
+        types = args.get('types', set())
         self.__scale = args.get('scale', 1.0)
-        self.__ignoreNonCollisionGroups = args.get('ignore_non_collision_groups', True)
         self.__use_mipmap = args.get('use_mipmap', True)
         self.__sph_blend_factor = args.get('sph_blend_factor', 1.0)
         self.__spa_blend_factor = args.get('spa_blend_factor', 1.0)
@@ -583,36 +594,49 @@ class PMXImporter:
 
         start_time = time.time()
 
-        self.__createGroups()
         self.__createObjects()
 
-        self.__importVertices()
-        self.__importBones()
-        self.__importMaterials()
-        self.__importFaces()
-        self.__importRigids()
-        self.__importJoints()
-        self.__importDisplayFrames()
+        if 'MESH' in types:
+            self.__createMeshObject()
+            self.__importVertices()
+            self.__importMaterials()
+            self.__importFaces()
+            self.__meshObj.data.update()
+            self.__assignCustomNormals()
 
-        self.__importVertexMorphs()
-        self.__importBoneMorphs()
-        self.__importMaterialMorphs()
+        if 'ARMATURE' in types:
+            self.__importBones()
+            if args.get('rename_LR_bones', False):
+                self.__renameLRBones()
+            self.__rig.applyAdditionalTransformConstraints()
 
-        if args.get('rename_LR_bones', False):
-            self.__renameLRBones()
+        if 'PHYSICS' in types:
+            self.__importRigids()
+            self.__importJoints()
 
-        self.__addArmatureModifier(self.__meshObj, self.__armObj)
-        self.__meshObj.data.update()
+        if 'DISPLAY' in types:
+            self.__importDisplayFrames()
+        else:
+            self.__rig.initialDisplayFrames()
 
-        self.__armObj.pmx_import_scale = self.__scale
+        if 'MORPHS' in types:
+            self.__importGroupMorphs()
+            self.__importVertexMorphs()
+            self.__importBoneMorphs()
+            self.__importMaterialMorphs()
+            self.__importUVMorphs()
 
-        for i in [self.__rigidObjGroup.objects, self.__jointObjGroup.objects, self.__tempObjGroup.objects]:
-            for j in i:
-                self.__allObjGroup.objects.link(j)
+        if self.__meshObj:
+            self.__addArmatureModifier(self.__meshObj, self.__armObj)
 
-        bpy.context.scene.gravity[2] = -9.81 * 10 * self.__scale
-        self.__rig.rootObject().mmd_root.show_meshes = True
-        self.__rig.applyAdditionalTransformConstraints()
+        #bpy.context.scene.gravity[2] = -9.81 * 10 * self.__scale
+        root = self.__rig.rootObject()
+        if 'MESH' not in types:
+            root.mmd_root.show_armature = True
+        else:
+            root.mmd_root.show_meshes = True
+        bpy.context.scene.objects.active = root
+        root.select = True
 
         logging.info(' Finished importing the model in %f seconds.', time.time() - start_time)
         logging.info('----------------------------------------')

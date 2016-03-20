@@ -74,12 +74,13 @@ class Model:
         root.mmd_root.name = name
         root.mmd_root.name_e = name_e
         root.mmd_root.scale = scale
-        root.lock_location = [True, True, True]
-        root.lock_rotation = [True, True, True]
+        #root.lock_location = [True, True, True]
+        #root.lock_rotation = [True, True, True]
         root.lock_scale = [True, True, True]
 
         arm = bpy.data.armatures.new(name=name)
         armObj = bpy.data.objects.new(name=name+'_arm', object_data=arm)
+        armObj.lock_rotation = armObj.lock_location = armObj.lock_scale = [True, True, True]
         armObj.parent = root
 
         scene.objects.link(root)
@@ -95,6 +96,19 @@ class Model:
             return cls.findRoot(obj.parent)
         else:
             return None
+
+    def initialDisplayFrames(self):
+        frames = self.__root.mmd_root.display_item_frames
+        if len(frames) > 0:
+            frames.clear()
+        frame_root = frames.add()
+        frame_root.name = 'Root'
+        frame_root.name_e = 'Root'
+        frame_root.is_special = True
+        frame_facial = frames.add()
+        frame_facial.name = u'表情'
+        frame_facial.name_e = 'Exp'
+        frame_facial.is_special = True
 
     def createRigidBody(self, **kwargs):
         ''' Create a object for MMD rigid body dynamics.
@@ -173,7 +187,6 @@ class Model:
             bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
 
         if collision_group_number is not None:
-            obj.data.materials.append(RigidBodyMaterial.getMaterial(collision_group_number))
             obj.mmd_rigid.collision_group_number = collision_group_number
             obj.draw_type = 'SOLID'
             obj.show_transparent = True
@@ -252,6 +265,7 @@ class Model:
             obj.mmd_joint.name_e = name_e
 
         obj.location = location
+        obj.rotation_mode = 'YXZ'
         obj.rotation_euler = rotation
         obj.empty_draw_size = size
         obj.empty_draw_type = 'ARROWS'
@@ -284,13 +298,13 @@ class Model:
         rbc.limit_lin_y_lower = min_loc[1]
         rbc.limit_lin_z_lower = min_loc[2]
 
-        rbc.limit_ang_x_upper = min_rot[0]
-        rbc.limit_ang_y_upper = min_rot[1]
-        rbc.limit_ang_z_upper = min_rot[2]
+        rbc.limit_ang_x_upper = max_rot[0]
+        rbc.limit_ang_y_upper = max_rot[1]
+        rbc.limit_ang_z_upper = max_rot[2]
 
-        rbc.limit_ang_x_lower = max_rot[0]
-        rbc.limit_ang_y_lower = max_rot[1]
-        rbc.limit_ang_z_lower = max_rot[2]
+        rbc.limit_ang_x_lower = min_rot[0]
+        rbc.limit_ang_y_lower = min_rot[1]
+        rbc.limit_ang_z_lower = min_rot[2]
 
         obj.mmd_joint.spring_linear = spring_linear
         obj.mmd_joint.spring_angular = spring_angular
@@ -371,6 +385,8 @@ class Model:
                 rigids = bpy.data.objects.new(name='rigidbodies', object_data=None)
                 rigids.mmd_type = 'RIGID_GRP_OBJ'
                 rigids.parent = self.__root
+                rigids.hide = rigids.hide_select = True
+                rigids.lock_rotation = rigids.lock_location = rigids.lock_scale = [True, True, True]
                 bpy.context.scene.objects.link(rigids)
                 self.__rigid_grp = rigids
         return self.__rigid_grp
@@ -384,6 +400,8 @@ class Model:
                 joints = bpy.data.objects.new(name='joints', object_data=None)
                 joints.mmd_type = 'JOINT_GRP_OBJ'
                 joints.parent = self.__root
+                joints.hide = joints.hide_select = True
+                joints.lock_rotation = joints.lock_location = joints.lock_scale = [True, True, True]
                 bpy.context.scene.objects.link(joints)
                 self.__joint_grp = joints
         return self.__joint_grp
@@ -397,6 +415,8 @@ class Model:
                 temporarys = bpy.data.objects.new(name='temporary', object_data=None)
                 temporarys.mmd_type = 'TEMPORARY_GRP_OBJ'
                 temporarys.parent = self.__root
+                temporarys.hide = temporarys.hide_select = True
+                temporarys.lock_rotation = temporarys.lock_location = temporarys.lock_scale = [True, True, True]
                 bpy.context.scene.objects.link(temporarys)
                 self.__temporary_grp = temporarys
         return self.__temporary_grp
@@ -406,6 +426,11 @@ class Model:
         if arm is None:
             return []
         return filter(lambda x: x.type == 'MESH' and x.mmd_type == 'NONE', self.allObjects(arm))
+
+    def firstMesh(self):
+        for i in self.meshes():
+            return i
+        return None
 
     def rigidBodies(self):
         return filter(isRigidBodyObject, self.allObjects(self.rigidGroupObject()))
@@ -432,14 +457,28 @@ class Model:
         bone.name = new_bone_name
 
     def build(self):
+        rigidbody_world_enabled = rigid_body.setRigidBodyWorldEnabled(False)
+        if self.__root.mmd_root.is_built:
+            self.clean()
         logging.info('****************************************')
         logging.info(' Build rig')
         logging.info('****************************************')
+        start_time = time.time()
+        self.__preBuild()
         self.buildRigids()
         self.buildJoints()
+        self.__postBuild()
+        logging.info(' Finished building in %f seconds.', time.time() - start_time)
         self.__root.mmd_root.is_built = True
+        rigid_body.setRigidBodyWorldEnabled(rigidbody_world_enabled)
 
     def clean(self):
+        rigidbody_world_enabled = rigid_body.setRigidBodyWorldEnabled(False)
+        logging.info('****************************************')
+        logging.info(' Clean rig')
+        logging.info('****************************************')
+        start_time = time.time()
+
         pose_bones = []
         arm = self.armature()
         track_to_bone_map = {}
@@ -450,6 +489,8 @@ class Model:
                 const = i.constraints['mmd_tools_rigid_track']
                 track_to_bone_map[const.target] = i
                 i.constraints.remove(const)
+
+        self.__removeChildrenOfTemporaryGroupObject() # for speeding up only
 
         for i in self.temporaryObjects():
             if i.mmd_type in ['NON_COLLISION_CONSTRAINT', 'SPRING_GOAL', 'SPRING_CONSTRAINT']:
@@ -467,69 +508,209 @@ class Model:
                 constraint.mute = True
                 bpy.context.scene.objects.unlink(i)
                 bpy.data.objects.remove(i)
-        self.rootObject().mmd_root.is_built = False
+
+        for i in self.rigidBodies():
+            self.__restoreTransforms(i)
+            relation = i.constraints['mmd_tools_rigid_parent']
+            relation.mute = True
+            if int(i.mmd_rigid.type) in [rigid_body.MODE_DYNAMIC, rigid_body.MODE_DYNAMIC_BONE]:
+                arm = relation.target
+                bone_name = relation.subtarget
+                if arm is not None and bone_name != '':
+                    for c in arm.pose.bones[bone_name].constraints:
+                        if c.type == 'IK':
+                            c.mute = False
+
+        for i in self.joints():
+            self.__restoreTransforms(i)
+
+        if arm is not None:
+            with bpyutils.edit_object(arm):
+                pass # XXX update armature only
+
+        mmd_root = self.rootObject().mmd_root
+        if mmd_root.show_temporary_objects:
+            mmd_root.show_temporary_objects = False
+        logging.info(' Finished cleaning in %f seconds.', time.time() - start_time)
+        mmd_root.is_built = False
+        rigid_body.setRigidBodyWorldEnabled(rigidbody_world_enabled)
+
+    def __removeChildrenOfTemporaryGroupObject(self):
+        tmp_grp_obj = self.temporaryGroupObject()
+        tmp_cnt = len(tmp_grp_obj.children)
+        if tmp_cnt == 0:
+            return
+        logging.debug(' Removing %d children of temporary group object', tmp_cnt)
+        start_time = time.time()
+        total_cnt = len(bpy.data.objects)
+        layer_index = list(bpy.context.scene.layers).index(True)
+        try:
+            bpy.ops.object.mode_set(mode='OBJECT')
+        except Exception:
+            pass
+        for i in bpy.context.selected_objects:
+            i.select = False
+        for i in tmp_grp_obj.children:
+            i.hide_select = i.hide = False
+            i.select = i.layers[layer_index] = True
+        assert(len(bpy.context.selected_objects) == tmp_cnt)
+        bpy.ops.object.delete()
+        assert(len(bpy.data.objects) == total_cnt - tmp_cnt)
+        logging.debug('   - Done in %f seconds.', time.time() - start_time)
+
+    def __restoreTransforms(self, obj):
+        for attr in ('location', 'rotation_euler'):
+            attr_name = '__backup_%s__'%attr
+            val = obj.get(attr_name, None)
+            if val is not None:
+                setattr(obj, attr, val)
+                del obj[attr_name]
+
+    def __backupTransforms(self, obj):
+        for attr in ('location', 'rotation_euler'):
+            attr_name = '__backup_%s__'%attr
+            obj[attr_name] = getattr(obj, attr, None)
+
+    def __preBuild(self):
+        self.__fake_parent_map = {}
+        self.__rigid_body_matrix_map = {}
+
+        no_parents = []
+        for i in self.rigidBodies():
+            self.__backupTransforms(i)
+            self.__rigid_body_matrix_map[i] = i.matrix_local.copy()
+            # mute relation
+            relation = i.constraints['mmd_tools_rigid_parent']
+            relation.mute = True
+            # mute IK
+            if int(i.mmd_rigid.type) in [rigid_body.MODE_DYNAMIC, rigid_body.MODE_DYNAMIC_BONE]:
+                arm = relation.target
+                bone_name = relation.subtarget
+                if arm is not None and bone_name != '':
+                    for c in arm.pose.bones[bone_name].constraints:
+                        if c.type == 'IK':
+                            c.mute = True
+                else:
+                    no_parents.append(i)
+
+        parented = []
+        for i in self.joints():
+            self.__backupTransforms(i)
+            rbc = i.rigid_body_constraint
+            obj1, obj2 = rbc.object1, rbc.object2
+            if obj2 in no_parents:
+                if obj1 not in no_parents and obj2 not in parented:
+                    self.__fake_parent_map.setdefault(obj1, []).append(obj2)
+                    parented.append(obj2)
+            elif obj1 in no_parents:
+                if obj1 not in parented:
+                    self.__fake_parent_map.setdefault(obj2, []).append(obj1)
+                    parented.append(obj1)
+
+        #assert(len(no_parents) == len(parented))
+
+    def __postBuild(self):
+        self.__fake_parent_map = None
+        self.__rigid_body_matrix_map = None
+        arm = self.armature()
+        if arm:
+            for p_bone in arm.pose.bones:
+                c = p_bone.constraints.get('mmd_tools_rigid_track', None)
+                if c:
+                    c.mute = False
 
     def updateRigid(self, rigid_obj):
-        if rigid_obj.mmd_type != 'RIGID_BODY':
-            raise TypeError('rigid_obj must be a mmd_rigid object')
+        assert(rigid_obj.mmd_type == 'RIGID_BODY')
 
         rigid = rigid_obj.mmd_rigid
+        rigid_type = int(rigid.type)
         relation = rigid_obj.constraints['mmd_tools_rigid_parent']
         arm = relation.target
         bone_name = relation.subtarget
-        target_bone = None
-        if arm is not None and bone_name != '':
-            target_bone = arm.pose.bones[bone_name]
 
-        if target_bone is not None:
-            for i in target_bone.constraints:
-                if i.name == 'mmd_tools_rigid_track':
-                    target_bone.constraints.remove(i)
-
-        if int(rigid.type) == rigid_body.MODE_STATIC:
+        if rigid_type == rigid_body.MODE_STATIC:
             rigid_obj.rigid_body.kinematic = True
         else:
             rigid_obj.rigid_body.kinematic = False
 
-        if int(rigid.type) == rigid_body.MODE_STATIC:
-            if arm is not None and bone_name != '':
+        if arm is not None and bone_name != '':
+            target_bone = arm.pose.bones[bone_name]
+
+            if rigid_type == rigid_body.MODE_STATIC:
                 relation.mute = False
-                relation.inverse_matrix = mathutils.Matrix(target_bone.matrix).inverted()
-            else:
-                relation.mute = True
-        else:
-            relation.mute = True
+                relation.inverse_matrix = (arm.matrix_world * target_bone.bone.matrix_local).inverted()
+                fake_children = self.__fake_parent_map.get(rigid_obj, None)
+                if fake_children:
+                    m = target_bone.matrix * target_bone.bone.matrix_local.inverted()
+                    for fake_child in fake_children:
+                        logging.debug('          - fake_child: %s', fake_child.name)
+                        t, r, s = (m * fake_child.matrix_local).decompose()
+                        fake_child.location = t
+                        fake_child.rotation_euler = r.to_euler(fake_child.rotation_mode)
 
-        if int(rigid.type) in [rigid_body.MODE_DYNAMIC, rigid_body.MODE_DYNAMIC_BONE] and arm is not None and target_bone is not None:
-            empty = bpy.data.objects.new(
-                'mmd_bonetrack',
-                None)
-            bpy.context.scene.objects.link(empty)
-            empty.location = target_bone.tail
-            empty.empty_draw_size = 0.1
-            empty.empty_draw_type = 'ARROWS'
-            empty.mmd_type = 'TRACK_TARGET'
-            empty.hide = True
-            empty.parent = self.temporaryGroupObject()
+            elif rigid_type in [rigid_body.MODE_DYNAMIC, rigid_body.MODE_DYNAMIC_BONE]:
+                m = target_bone.matrix * target_bone.bone.matrix_local.inverted()
+                t, r, s = (m * rigid_obj.matrix_local).decompose()
+                rigid_obj.location = t
+                rigid_obj.rotation_euler = r.to_euler(rigid_obj.rotation_mode)
+                fake_children = self.__fake_parent_map.get(rigid_obj, None)
+                if fake_children:
+                    for fake_child in fake_children:
+                        logging.debug('          - fake_child: %s', fake_child.name)
+                        t, r, s = (m * fake_child.matrix_local).decompose()
+                        fake_child.location = t
+                        fake_child.rotation_euler = r.to_euler(fake_child.rotation_mode)
 
-            rigid_obj.mmd_rigid.bone = relation.subtarget
-            rigid_obj.constraints.remove(relation)
+                if 'mmd_tools_rigid_track' not in target_bone.constraints:
+                    empty = bpy.data.objects.new(
+                        'mmd_bonetrack',
+                        None)
+                    bpy.context.scene.objects.link(empty)
+                    empty.location = arm.matrix_world * target_bone.tail
+                    empty.empty_draw_size = 0.1
+                    empty.empty_draw_type = 'ARROWS'
+                    empty.mmd_type = 'TRACK_TARGET'
+                    empty.hide = True
+                    #empty.parent = self.temporaryGroupObject()
 
-            bpyutils.setParent(empty, rigid_obj)
-            empty.select = False
-            empty.hide = True
+                    rigid_obj.mmd_rigid.bone = relation.subtarget
+                    rigid_obj.constraints.remove(relation)
 
-            for i in target_bone.constraints:
-                if i.type == 'IK':
-                    i.mute = True
-            const = target_bone.constraints.new('DAMPED_TRACK')
-            const.name='mmd_tools_rigid_track'
-            const.target = empty
+                    bpyutils.setParent(empty, rigid_obj)
+                    empty.select = False
+                    empty.hide = True
 
-        t=rigid_obj.hide
-        with bpyutils.select_object(rigid_obj):
-            bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
-        rigid_obj.hide = t
+                    const = target_bone.constraints.new('DAMPED_TRACK')
+                    const.mute = True
+                    const.name='mmd_tools_rigid_track'
+                    const.target = empty
+                else:
+                    empty = target_bone.constraints['mmd_tools_rigid_track'].target
+                    ori_rigid_obj = empty.parent
+                    if rigid_obj.rigid_body.mass > ori_rigid_obj.rigid_body.mass:
+                        logging.info('        * Bone (%s): change target from [%s] to [%s]',
+                            target_bone.name, ori_rigid_obj.name, rigid_obj.name)
+                        # re-parenting
+                        rigid_obj.mmd_rigid.bone = relation.subtarget
+                        rigid_obj.constraints.remove(relation)
+                        bpyutils.setParent(empty, rigid_obj)
+                        empty.select = False
+                        empty.hide = True
+                        # revert change
+                        const = ori_rigid_obj.constraints.new('CHILD_OF')
+                        const.target = arm
+                        const.subtarget = bone_name
+                        const.name = 'mmd_tools_rigid_parent'
+                        const.mute = True
+                    else:
+                        logging.info('        * Bone (%s): track target [%s]',
+                            target_bone.name, ori_rigid_obj.name)
+
+        if rigid_obj.scale != mathutils.Vector((1,1,1)):
+            t = rigid_obj.hide
+            with bpyutils.select_object(rigid_obj):
+                bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+            rigid_obj.hide = t
 
         rigid_obj.rigid_body.collision_shape = rigid.shape
 
@@ -557,9 +738,8 @@ class Model:
             bpy.ops.rigidbody.constraint_add(type='GENERIC')
         rb = ncc_obj.rigid_body_constraint
         rb.disable_collisions = True
-        
-        ncc_objs = []
-        last_selected = [ncc_obj]
+        assert(ncc_obj.select and len(bpy.context.selected_objects) == 1)
+        last_selected = ncc_objs = [ncc_obj]
         while len(ncc_objs) < total_len:
             bpy.ops.object.duplicate()
             ncc_objs.extend(bpy.context.selected_objects)
@@ -574,10 +754,10 @@ class Model:
             last_selected = bpy.context.selected_objects
         logging.debug(' created %d ncc.', len(ncc_objs))
 
-        for i in range(total_len):
-            rb = ncc_objs[i].rigid_body_constraint
-            rb.object1, rb.object2 = nonCollisionJointTable[i]
-        
+        for ncc_obj, pair in zip(ncc_objs, nonCollisionJointTable):
+            rbc = ncc_obj.rigid_body_constraint
+            rbc.object1, rbc.object2 = pair
+            ncc_obj.hide = ncc_obj.hide_select = True
         logging.debug(' finish in %f seconds.', time.time() - start_time)
         logging.debug('-'*60)
 
@@ -586,9 +766,6 @@ class Model:
         logging.debug(' Build riggings of rigid bodies')
         logging.debug('--------------------------------')
         rigid_objects = list(self.rigidBodies())
-        for i in rigid_objects:
-            logging.debug(' Updating rigid body %s', i.name)
-            self.updateRigid(i)
         rigid_object_groups = [[] for i in range(16)]
         for i in rigid_objects:
             rigid_object_groups[i.mmd_rigid.collision_group_number].append(i)
@@ -598,19 +775,19 @@ class Model:
             rbc = joint.rigid_body_constraint
             rbc.disable_collisions = False
             jointMap[frozenset((rbc.object1, rbc.object2))] = joint
-            jointMap[frozenset((rbc.object2, rbc.object1))] = joint
 
         logging.info('Creating non collision constraints')
         # create non collision constraints
         nonCollisionJointTable = []
         non_collision_pairs = set()
         rigid_object_cnt = len(rigid_objects)
-        for cnt, obj_a in enumerate(rigid_objects):
-            logging.info('%3d/%3d: %s', cnt+1, rigid_object_cnt, obj_a.name)
+        for obj_a in rigid_objects:
             for n, ignore in enumerate(obj_a.mmd_rigid.collision_group_mask):
                 if not ignore:
                     continue
                 for obj_b in rigid_object_groups[n]:
+                    if obj_a == obj_b:
+                        continue
                     pair = frozenset((obj_a, obj_b))
                     if pair in non_collision_pairs:
                         continue
@@ -622,8 +799,9 @@ class Model:
                         if distance < distance_of_ignore_collisions * (self.__getRigidRange(obj_a) + self.__getRigidRange(obj_b)) * 0.5:
                             nonCollisionJointTable.append((obj_a, obj_b))
                     non_collision_pairs.add(pair)
-                    non_collision_pairs.add(frozenset((obj_b, obj_a)))
-        
+        for cnt, i in enumerate(rigid_objects):
+            logging.info('%3d/%3d: Updating rigid body %s', cnt+1, rigid_object_cnt, i.name)
+            self.updateRigid(i)
         self.__createNonCollisionConstraint(nonCollisionJointTable)
         return rigid_objects
 
@@ -677,7 +855,14 @@ class Model:
             self.__makeSpring(rbc.object1, rbc.object2, joint_obj.mmd_joint.spring_angular)
 
     def buildJoints(self):
-        pass
+        for i in self.joints():
+            src_obj = i.rigid_body_constraint.object1
+            m0 = self.__rigid_body_matrix_map[src_obj]
+            m1 = src_obj.matrix_local
+            m = m1 * m0.inverted() * i.matrix_local
+            t, r, s = m.decompose()
+            i.location = t
+            i.rotation_euler = r.to_euler(i.rotation_mode)
 
     def applyAdditionalTransformConstraints(self, force=False):
         arm = self.armature()
@@ -686,40 +871,3 @@ class Model:
             fnBone.pose_bone = bone
             fnBone.apply_additional_transformation()
 
-
-class RigidBodyMaterial:
-    COLORS = [
-        0x7fddd4,
-        0xf0e68c,
-        0xee82ee,
-        0xffe4e1,
-        0x8feeee,
-        0xadff2f,
-        0xfa8072,
-        0x9370db,
-
-        0x40e0d0,
-        0x96514d,
-        0x5a964e,
-        0xe6bfab,
-        0xd3381c,
-        0x165e83,
-        0x701682,
-        0x828216,
-        ]
-    @classmethod
-    def getMaterial(cls, number):
-        number = int(number)
-        material_name = 'mmd_tools_rigid_%d'%(number)
-        if material_name not in bpy.data.materials:
-            mat = bpy.data.materials.new(material_name)
-            color = cls.COLORS[number]
-            mat.diffuse_color = [((0xff0000 & color) >> 16) / float(255), ((0x00ff00 & color) >> 8) / float(255), (0x0000ff & color) / float(255)]
-            mat.diffuse_intensity = 1
-            mat.specular_intensity = 0
-            mat.alpha = 0.5
-            mat.use_transparency = True
-            mat.use_shadeless = True
-        else:
-            mat = bpy.data.materials[material_name]
-        return mat

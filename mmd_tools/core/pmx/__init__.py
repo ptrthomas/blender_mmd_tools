@@ -348,7 +348,7 @@ class Model:
         dsp_face = Display()
         dsp_face.isSpecial = True
         dsp_face.name = '表情'
-        dsp_face.name_e = ''
+        dsp_face.name_e = 'Exp'
         self.display.append(dsp_face)
 
         self.rigids = []
@@ -420,7 +420,8 @@ class Model:
             logging.debug('  Comment: %s', m.comment)
             logging.debug('  Vertex Count: %d', m.vertex_count)
             logging.debug('  Diffuse: (%.2f, %.2f, %.2f, %.2f)', *m.diffuse)
-            logging.debug('  Specular: (%.2f, %.2f, %.2f, %.2f)', *m.specular)
+            logging.debug('  Specular: (%.2f, %.2f, %.2f)', *m.specular)
+            logging.debug('  Shininess: %f', m.shininess)
             logging.debug('  Ambient: (%.2f, %.2f, %.2f)', *m.ambient)
             logging.debug('  Double Sided: %s', str(m.is_double_sided))
             logging.debug('  Drop Shadow: %s', str(m.enabled_drop_shadow))
@@ -462,7 +463,6 @@ class Model:
             logging.debug('  Movable: %s', str(b.isMovable))
             logging.debug('  Visible: %s', str(b.visible))
             logging.debug('  Controllable: %s', str(b.isControllable))
-            logging.debug('  Edge: %s', str(m.enabled_toon_edge))
             logging.debug('  Additional Location: %s', str(b.hasAdditionalRotate))
             logging.debug('  Additional Rotation: %s', str(b.hasAdditionalRotate))
             if b.additionalTransform is not None:
@@ -827,12 +827,13 @@ class Material:
 
         self.diffuse = []
         self.specular = []
+        self.shininess = 0
         self.ambient = []
 
-        self.is_double_sided = False
-        self.enabled_drop_shadow = False
-        self.enabled_self_shadow_map = False
-        self.enabled_self_shadow = False
+        self.is_double_sided = True
+        self.enabled_drop_shadow = True
+        self.enabled_self_shadow_map = True
+        self.enabled_self_shadow = True
         self.enabled_toon_edge = False
 
         self.edge_color = []
@@ -848,11 +849,12 @@ class Material:
         self.vertex_count = 0
 
     def __repr__(self):
-        return '<Material name %s, name_e %s, diffuse %s, specular %s, ambient %s, double_side %s, drop_shadow %s, self_shadow_map %s, self_shadow %s, toon_edge %s, edge_color %s, edge_size %s, toon_texture %s, comment %s>'%(
+        return '<Material name %s, name_e %s, diffuse %s, specular %s, shininess %s, ambient %s, double_side %s, drop_shadow %s, self_shadow_map %s, self_shadow %s, toon_edge %s, edge_color %s, edge_size %s, toon_texture %s, comment %s>'%(
             self.name,
             self.name_e,
             str(self.diffuse),
             str(self.specular),
+            str(self.shininess),
             str(self.ambient),
             str(self.is_double_sided),
             str(self.enabled_drop_shadow),
@@ -871,7 +873,8 @@ class Material:
         self.name_e = fs.readStr()
 
         self.diffuse = fs.readVector(4)
-        self.specular = fs.readVector(4)
+        self.specular = fs.readVector(3)
+        self.shininess = fs.readFloat()
         self.ambient = fs.readVector(3)
 
         flags = fs.readByte()
@@ -900,10 +903,11 @@ class Material:
 
     def save(self, fs):
         fs.writeStr(self.name)
-        fs.writeStr(self.name)
+        fs.writeStr(self.name_e)
 
         fs.writeVector(self.diffuse)
         fs.writeVector(self.specular)
+        fs.writeFloat(self.shininess)
         fs.writeVector(self.ambient)
 
         flags = 0
@@ -1298,6 +1302,7 @@ class MaterialMorphOffset:
         self.offset_type = 0
         self.diffuse_offset = []
         self.specular_offset = []
+        self.shininess_offset = 0
         self.ambient_offset = []
         self.edge_color_offset = []
         self.edge_size_offset = []
@@ -1309,7 +1314,8 @@ class MaterialMorphOffset:
         self.index = fs.readMaterialIndex()
         self.offset_type = fs.readSignedByte()
         self.diffuse_offset = fs.readVector(4)
-        self.specular_offset = fs.readVector(4)
+        self.specular_offset = fs.readVector(3)
+        self.shininess_offset = fs.readFloat()
         self.ambient_offset = fs.readVector(3)
         self.edge_color_offset = fs.readVector(4)
         self.edge_size_offset = fs.readFloat()
@@ -1322,6 +1328,7 @@ class MaterialMorphOffset:
         fs.writeSignedByte(self.offset_type)
         fs.writeVector(self.diffuse_offset)
         fs.writeVector(self.specular_offset)
+        fs.writeFloat(self.shininess_offset)
         fs.writeVector(self.ambient_offset)
         fs.writeVector(self.edge_color_offset)
         fs.writeFloat(self.edge_size_offset)

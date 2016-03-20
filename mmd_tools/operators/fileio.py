@@ -6,7 +6,7 @@ import traceback
 
 import bpy
 from bpy.types import Operator
-from bpy_extras.io_utils import ImportHelper
+from bpy_extras.io_utils import ImportHelper, ExportHelper
 
 from mmd_tools import auto_scene_setup
 
@@ -35,6 +35,21 @@ def log_handler(log_level, filepath=None):
     return handler
 
 
+def _update_types(cls, prop):
+    types = cls.types.copy()
+
+    if 'PHYSICS' in types:
+        types.add('ARMATURE')
+    if 'DISPLAY' in types:
+        types.add('ARMATURE')
+    if 'MORPHS' in types:
+        types.add('ARMATURE')
+        types.add('MESH')
+
+    if types != cls.types:
+        cls.types = types # trigger update
+
+
 class ImportPmx(Operator, ImportHelper):
     bl_idname = 'mmd_tools.import_model'
     bl_label = 'Import Model file (.pmd, .pmx)'
@@ -44,9 +59,22 @@ class ImportPmx(Operator, ImportHelper):
     filename_ext = '.pmx'
     filter_glob = bpy.props.StringProperty(default='*.pmx;*.pmd', options={'HIDDEN'})
 
+    types = bpy.props.EnumProperty(
+        name='Types',
+        description='Select which parts will be imported',
+        options={'ENUM_FLAG'},
+        items = [
+            ('MESH', 'Mesh', '', 1),
+            ('ARMATURE', 'Armature', '', 2),
+            ('PHYSICS', 'Physics', 'Rigidbodies and joints (include Armature)', 4),
+            ('DISPLAY', 'Display', 'Display frames (include Armature)', 8),
+            ('MORPHS', 'Morphs', 'Morphs (include Armature and Mesh)', 16),
+            ],
+        default={'MESH', 'ARMATURE', 'PHYSICS', 'DISPLAY', 'MORPHS',},
+        update=_update_types,
+        )
     scale = bpy.props.FloatProperty(name='Scale', default=0.2)
     renameBones = bpy.props.BoolProperty(name='Rename bones', default=True)
-    ignore_non_collision_groups = bpy.props.BoolProperty(name='Ignore  non collision groups', default=False)
     use_mipmap = bpy.props.BoolProperty(name='use MIP maps for UV textures', default=True)
     sph_blend_factor = bpy.props.FloatProperty(name='influence of .sph textures', default=1.0)
     spa_blend_factor = bpy.props.FloatProperty(name='influence of .spa textures', default=1.0)
@@ -58,16 +86,14 @@ class ImportPmx(Operator, ImportHelper):
         logger.setLevel(self.log_level)
         if self.save_log:
             handler = log_handler(self.log_level, filepath=self.filepath + '.mmd_tools.import.log')
-        else:
-            handler = log_handler(self.log_level)
-        logger.addHandler(handler)
+            logger.addHandler(handler)
         try:
             if re.search('\.pmd', self.filepath, flags=re.I):
                 pmd_importer.import_pmd(
                     filepath=self.filepath,
+                    types=self.types,
                     scale=self.scale,
                     rename_LR_bones=self.renameBones,
-                    ignore_non_collision_groups=self.ignore_non_collision_groups,
                     use_mipmap=self.use_mipmap,
                     sph_blend_factor=self.sph_blend_factor,
                     spa_blend_factor=self.spa_blend_factor
@@ -76,9 +102,9 @@ class ImportPmx(Operator, ImportHelper):
                 importer = pmx_importer.PMXImporter()
                 importer.execute(
                     filepath=self.filepath,
+                    types=self.types,
                     scale=self.scale,
                     rename_LR_bones=self.renameBones,
-                    ignore_non_collision_groups=self.ignore_non_collision_groups,
                     use_mipmap=self.use_mipmap,
                     sph_blend_factor=self.sph_blend_factor,
                     spa_blend_factor=self.spa_blend_factor
@@ -87,7 +113,8 @@ class ImportPmx(Operator, ImportHelper):
             logging.error(traceback.format_exc())
             self.report({'ERROR'}, str(e))
         finally:
-            logger.removeHandler(handler)
+            if self.save_log:
+                logger.removeHandler(handler)
 
         return {'FINISHED'}
 
@@ -110,7 +137,28 @@ class ImportVmd(Operator, ImportHelper):
     margin = bpy.props.IntProperty(name='Margin', default=5, min=0)
     update_scene_settings = bpy.props.BoolProperty(name='Update scene settings', default=True)
 
+    @classmethod
+    def poll(cls, context):
+        return len(context.selected_objects) > 0
+
     def execute(self, context):
+        active_object = context.active_object
+        hidden_obj = []
+        for i in context.selected_objects:
+            root = mmd_model.Model.findRoot(i)
+            if root == i:
+                rig = mmd_model.Model(root)
+                arm = rig.armature()
+                if arm.hide:
+                    arm.hide = False
+                    hidden_obj.append(arm)
+                arm.select = True
+                for m in rig.meshes():
+                    if m.hide:
+                        m.hide = False
+                        hidden_obj.append(m)
+                    m.select = True
+
         importer = vmd_importer.VMDImporter(filepath=self.filepath, scale=self.scale, frame_margin=self.margin)
         for i in context.selected_objects:
             importer.assign(i)
@@ -118,6 +166,12 @@ class ImportVmd(Operator, ImportHelper):
             auto_scene_setup.setupFrameRanges()
             auto_scene_setup.setupFps()
 
+        for i in hidden_obj:
+            i.select = False
+            i.hide = True
+
+        active_object.select = True
+        context.scene.objects.active = active_object
         return {'FINISHED'}
 
     def invoke(self, context, event):
@@ -165,7 +219,7 @@ class ImportVmdToMMDModel(Operator, ImportHelper):
         return {'RUNNING_MODAL'}
 
 
-class ExportPmx(Operator, ImportHelper):
+class ExportPmx(Operator, ExportHelper):
     bl_idname = 'mmd_tools.export_pmx'
     bl_label = 'Export PMX file (.pmx)'
     bl_description = 'Export a PMX file (.pmx)'
@@ -179,14 +233,18 @@ class ExportPmx(Operator, ImportHelper):
     log_level = bpy.props.EnumProperty(items=LOG_LEVEL_ITEMS, name='Log level', default='DEBUG')
     save_log = bpy.props.BoolProperty(name='Create a log file', default=False)
 
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj and mmd_model.Model.findRoot(obj)
+
     def execute(self, context):
+        active_object = context.active_object
         logger = logging.getLogger()
         logger.setLevel(self.log_level)
         if self.save_log:
             handler = log_handler(self.log_level, filepath=self.filepath + '.mmd_tools.export.log')
-        else:
-            handler = log_handler(self.log_level)
-        logger.addHandler(handler)
+            logger.addHandler(handler)
 
         root = mmd_model.Model.findRoot(context.active_object)
         rig = mmd_model.Model(root)
@@ -203,8 +261,11 @@ class ExportPmx(Operator, ImportHelper):
                 copy_textures=self.copy_textures,
                 )
         finally:
-            logger.removeHandler(handler)
+            if self.save_log:
+                logger.removeHandler(handler)
 
+        active_object.select = True
+        context.scene.objects.active = active_object
         return {'FINISHED'}
 
     def invoke(self, context, event):

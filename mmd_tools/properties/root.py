@@ -6,9 +6,12 @@ from bpy.types import PropertyGroup
 from bpy.props import BoolProperty, CollectionProperty, FloatProperty, IntProperty, StringProperty, EnumProperty
 
 import mmd_tools.core.model as mmd_model
+from mmd_tools.core.material import FnMaterial
 from mmd_tools.properties.morph import BoneMorph
 from mmd_tools.properties.morph import MaterialMorph
 from mmd_tools.properties.morph import VertexMorph
+from mmd_tools.properties.morph import UVMorph
+from mmd_tools.properties.morph import GroupMorph
 from mmd_tools import utils
 
 #===========================================
@@ -23,6 +26,26 @@ def _toggleVisibilityOfMeshes(self, context):
         context.scene.objects.active = root
     for i in objects:
         i.hide = hide
+
+def _toggleUseToonTexture(self, context):
+    root = self.id_data
+    rig = mmd_model.Model(root)
+    use_toon = self.use_toon_texture
+    for i in rig.meshes():
+        for m in i.data.materials:
+            if m is None:
+                continue
+            FnMaterial(m).use_toon_texture(use_toon)
+
+def _toggleUseSphereTexture(self, context):
+    root = self.id_data
+    rig = mmd_model.Model(root)
+    use_sphere = self.use_sphere_texture
+    for i in rig.meshes():
+        for m in i.data.materials:
+            if m is None:
+                continue
+            FnMaterial(m).use_sphere_texture(use_sphere)
 
 def _toggleVisibilityOfRigidBodies(self, context):
     root = self.id_data
@@ -122,16 +145,17 @@ class MMDDisplayItem(PropertyGroup):
             ],
         )
 
-    morph_category = EnumProperty(
-        name='Category',
+    morph_type = EnumProperty(
+        name='Morph Type',
+        description='Morph Type',
         items = [
-            ('SYSTEM', 'System', '', 0),
-            ('EYEBROW', 'Eye Brow', '', 1),
-            ('EYE', 'Eye', '', 2),
-            ('MOUTH', 'Mouth', '', 3),
-            ('OTHER', 'Other', '', 4),
+            ('material_morphs', 'Material', '', 0),
+            ('uv_morphs', 'UV', '', 1),
+            ('bone_morphs', 'Bone', '', 2),
+            ('vertex_morphs', 'Vertex', '', 3),
+            ('group_morphs', 'Group', '', 4),
             ],
-        default='OTHER',
+        default='vertex_morphs',
         )
 
 class MMDDisplayItemFrame(PropertyGroup):
@@ -161,6 +185,7 @@ class MMDDisplayItemFrame(PropertyGroup):
     ## 現在アクティブな項目のインデックス
     active_item = IntProperty(
         name='Active Display Item',
+        min=0,
         default=0,
         )
 
@@ -177,6 +202,16 @@ class MMDRoot(PropertyGroup):
 
     name_e = StringProperty(
         name='Name (English)',
+        default='',
+        )
+
+    comment_text = StringProperty(
+        name='Comment',
+        default='',
+        )
+
+    comment_e_text = StringProperty(
+        name='Comment (English)',
         default='',
         )
 
@@ -214,6 +249,18 @@ class MMDRoot(PropertyGroup):
     show_names_of_joints = BoolProperty(
         name='Show Joint Names',
         update=_toggleShowNamesOfJoints,
+        )
+
+    use_toon_texture = BoolProperty(
+        name='Use Toon Texture',
+        update=_toggleUseToonTexture,
+        default=True,
+        )
+
+    use_sphere_texture = BoolProperty(
+        name='Use Sphere Texture',
+        update=_toggleUseSphereTexture,
+        default=True,
         )
 
     scale = FloatProperty(
@@ -261,7 +308,10 @@ class MMDRoot(PropertyGroup):
         name='Material Morphs',
         type=MaterialMorph,
         )
-
+    uv_morphs = CollectionProperty(
+        name='UV Morphs',
+        type=UVMorph,
+        )
     bone_morphs = CollectionProperty(
         name='Bone Morphs',
         type=BoneMorph,
@@ -270,14 +320,21 @@ class MMDRoot(PropertyGroup):
         name='Vertex Morphs',
         type=VertexMorph
         )
+    group_morphs = CollectionProperty(
+        name='Group Morphs',
+        type=GroupMorph,
+        )
     active_morph_type = EnumProperty(
         name='Active Morph Type',
+        description='Active Morph Type',
         items = [
-            ('MATMORPH', 'Material', '', 0),
-            ('BONEMORPH', 'Bone', '', 1),
-            ('VTXMORPH', 'Vertex', '', 2),
+            ('material_morphs', 'Material', '', 0),
+            ('uv_morphs', 'UV', '', 1),
+            ('bone_morphs', 'Bone', '', 2),
+            ('vertex_morphs', 'Vertex', '', 3),
+            ('group_morphs', 'Group', '', 4),
             ],
-        default='VTXMORPH',
+        default='vertex_morphs',
         update=_activeMorphReset
         )
     active_morph = IntProperty(
