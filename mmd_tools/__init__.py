@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+import os
 import logging
 import bpy
 from bpy.types import AddonPreferences
@@ -52,6 +53,7 @@ class MMDToolsAddonPreferences(AddonPreferences):
     shared_toon_folder = StringProperty(
             name="Shared Toon Texture Folder",
             subtype='DIR_PATH',
+            default=os.path.dirname(os.path.abspath(__file__)) + os.path.sep + "textures"
             )
 
     def draw(self, context):
