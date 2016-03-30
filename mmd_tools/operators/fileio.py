@@ -126,7 +126,7 @@ class ImportVmd(Operator, ImportHelper):
     filter_glob = bpy.props.StringProperty(default='*.vmd', options={'HIDDEN'})
 
     scale = bpy.props.FloatProperty(name='Scale', default=0.2)
-    margin = bpy.props.IntProperty(name='Margin', default=5, min=0)
+    margin = bpy.props.IntProperty(name='Margin', default=0, min=0)
     update_scene_settings = bpy.props.BoolProperty(name='Update scene settings', default=True)
 
     @classmethod
