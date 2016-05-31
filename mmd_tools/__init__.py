@@ -51,14 +51,14 @@ class MMDToolsAddonPreferences(AddonPreferences):
             name="Shared Toon Texture Folder",
             description=('Directory path to toon textures. This is normally the ' +
                          '"Data" directory within of your MikuMikuDance directory'),
+            default=os.path.dirname(os.path.abspath(__file__)) + os.path.sep + "textures",
             subtype='DIR_PATH',
             )
     base_texture_folder = StringProperty(
             name='Base Texture Folder',
             description=('This directory path will be used to determine the relative ' +
                          'path of the textures you use'),
-            subtype='DIR_PATH',
-            default=os.path.dirname(os.path.abspath(__file__)) + os.path.sep + "textures"
+            subtype='DIR_PATH'            
             )
 
     def draw(self, context):
