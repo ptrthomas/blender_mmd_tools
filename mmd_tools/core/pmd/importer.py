@@ -12,15 +12,18 @@ import mmd_tools.core.pmx.importer as import_pmx
 import mmd_tools.core.pmd as pmd
 import mmd_tools.core.pmx as pmx
 
+from math import radians
 
 class PMDImporter:
     def execute(self, **args):
-        import_pmd(**args)
+        args['pmx'] = import_pmd_to_pmx(args['filepath'])
+        importer = import_pmx.PMXImporter()
+        importer.execute(**args)
 
-def import_pmd(**kwargs):
+def import_pmd_to_pmx(filepath):
     """ Import pmd file
     """
-    target_path = kwargs['filepath']
+    target_path = filepath
     pmd_model = pmd.load(target_path)
 
 
@@ -28,7 +31,7 @@ def import_pmd(**kwargs):
     logging.info('****************************************')
     logging.info(' mmd_tools.import_pmd module')
     logging.info('----------------------------------------')
-    logging.info(' Start to convert pmx data into pmd data')
+    logging.info(' Start to convert pmd data into pmx data')
     logging.info('              by the mmd_tools.pmd modlue.')
     logging.info('')
 
@@ -155,12 +158,13 @@ def import_pmd(**kwargs):
         pmx_bone.isIK = True
         pmx_bone.target = ik.target_bone
         pmx_bone.loopCount = ik.iterations
+        pmx_bone.rotationConstraint = ik.control_weight*4
         for i in ik.ik_child_bones:
             ik_link = pmx.IKLink()
             ik_link.target = i
             if i in knee_bones:
-                ik_link.maximumAngle = [-0.5, 0.0, 0.0]
-                ik_link.minimumAngle = [-180.0, 0.0, 0.0]
+                ik_link.maximumAngle = [radians(-0.5), 0.0, 0.0]
+                ik_link.minimumAngle = [radians(-180.0), 0.0, 0.0]
                 logging.info('  Add knee constraints to %s', i)
             logging.debug('  IKLink: %s(index: %d)', pmx_model.bones[i].name, i)
             pmx_bone.ik_links.append(ik_link)
@@ -183,6 +187,7 @@ def import_pmd(**kwargs):
         pmx_mat.enabled_self_shadow = True # pmd doesn't support this
         pmx_mat.enabled_self_shadow_map = abs(mat.diffuse[3] - 0.98) > 1e-7 # consider precision error
         pmx_mat.enabled_toon_edge = (mat.edge_flag != 0)
+        pmx_mat.edge_color = [0, 0, 0, 1]
         pmx_mat.vertex_count = mat.vertex_count
         if len(mat.texture_path) > 0:
             tex_path = mat.texture_path
@@ -341,6 +346,4 @@ def import_pmd(**kwargs):
     logging.info(' mmd_tools.import_pmd module')
     logging.info('****************************************')
 
-    importer = import_pmx.PMXImporter()
-    kwargs['pmx'] = pmx_model
-    importer.execute(**kwargs)
+    return pmx_model

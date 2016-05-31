@@ -43,7 +43,7 @@ def selectSingleBone(context, armature, bone_name, reset_pose=False):
         i.select = False
     armature.hide = False
     armature.select = True
-    armature.layers[list(context.scene.layers).index(True)] = True
+    armature.layers[context.scene.active_layer] = True
     context.scene.objects.active = armature
     if reset_pose:
         def_loc = Vector((0,0,0))
@@ -116,6 +116,17 @@ def separateByMaterials(meshObj):
             i.name = mat.name
             i.parent = prev_parent
 
+def clearUnusedMeshes():
+    import bpy
+    meshes_to_delete = []
+    for mesh in bpy.data.meshes:
+        if mesh.users == 0:
+            meshes_to_delete.append(mesh)
+
+    for mesh in meshes_to_delete:
+        bpy.data.meshes.remove(mesh)
+    
+
 
 ## Boneのカスタムプロパティにname_jが存在する場合、name_jの値を
 # それ以外の場合は通常のbone名をキーとしたpose_boneへの辞書を作成
@@ -139,3 +150,23 @@ def uniqueName(name, used_names):
         count += 1
     return new_name
 
+def int2base(x, base):
+    """
+    Method to convert an int to a base
+    Source: http://stackoverflow.com/questions/2267362
+    """
+    import string
+    digs = string.digits + string.ascii_uppercase
+    if x < 0: sign = -1
+    elif x == 0: return digs[0]
+    else: 
+        sign = 1
+        x *= sign
+        digits = []
+    while x:
+        digits.append(digs[x % base])
+        x = int(x / base)
+    if sign < 0:
+        digits.append('-')
+    digits.reverse()
+    return ''.join(digits)

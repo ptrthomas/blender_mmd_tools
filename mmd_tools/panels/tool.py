@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import bpy
-from bpy.types import Panel, UIList
+from bpy.types import Panel, Menu, UIList
 
 from mmd_tools import operators
 import mmd_tools.core.model as mmd_model
@@ -31,13 +31,18 @@ class MMDToolsObjectPanel(_PanelBase, Panel):
         col = layout.column(align=True)
         col.operator(operators.material.ConvertMaterialsForCycles.bl_idname, text='Convert Materials For Cycles')
         col.operator('mmd_tools.separate_by_materials', text='Separate By Materials')
+        col.operator(operators.misc.JoinMeshes.bl_idname)
+        col.operator(operators.misc.AttachMeshesToMMD.bl_idname)
 
         if active_obj is None:
             return
 
         root = mmd_model.Model.findRoot(active_obj)
         if root:
-            col = self.layout.column(align=True)
+            # col = self.layout.column(align=True)
+            # col.label('Options:')
+            # col.prop(root.mmd_root, 'advanced_mode')
+            col = self.layout.column(align=True)            
             col.label('Rigidbody:')
             row = col.row(align=True)
             row.operator('mmd_tools.build_rig')
@@ -337,6 +342,7 @@ class MMDMorphToolsPanel(_PanelBase, Panel):
 
     def _draw_material_data(self, context, rig, col, morph):
         meshObj = rig.firstMesh()
+
         if meshObj is None:
             c = col.column(align=True)
             c.label("The model mesh can't be found", icon='ERROR')
@@ -361,6 +367,12 @@ class MMDMorphToolsPanel(_PanelBase, Panel):
             return # If the list is empty we should stop drawing the panel here
         data = morph.data[morph.active_material_data]
         c_mat = col.column(align=True)
+        # if mmd_root.advanced_mode:
+        c_mat.prop_search(data, 'related_mesh', bpy.data, 'meshes')
+        # Switch to the related mesh here if found
+        relMesh = rig.findMesh(data.related_mesh)
+        meshObj = relMesh or meshObj
+        
         c_mat.prop_search(data, 'material', meshObj.data, 'materials')
 
         base_mat_name = data.material
@@ -528,17 +540,23 @@ class UL_ObjectsMixIn(object):
             ],
         default='ACTIVE',
         )
+    visible_only = bpy.props.BoolProperty(
+        name='Visible Only',
+        default=False,
+        )
 
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index, flt_flag):
         if self.layout_type in {'DEFAULT', 'COMPACT'}:
             layout.prop(item, 'name', text='', emboss=False, icon=self.icon)
+            self.draw_item_special(context, layout, item)
         elif self.layout_type in {'GRID'}:
             layout.alignment = 'CENTER'
             layout.label(text='', icon=self.icon)
 
     def draw_filter(self, context, layout):
-        row = layout.row()
+        row = layout.row(align=True)
         row.prop(self, 'model_filter', expand=True)
+        row.prop(self, 'visible_only', text='', toggle=True, icon='RESTRICT_VIEW_OFF')
 
     def filter_items(self, context, data, propname):
         objects = getattr(data, propname)
@@ -555,12 +573,40 @@ class UL_ObjectsMixIn(object):
                 if obj.mmd_type == self.mmd_type:
                     flt_flags[i] = self.bitflag_filter_item
 
+        if self.visible_only:
+            for i, obj in enumerate(objects):
+                if obj.hide and flt_flags[i] == self.bitflag_filter_item:
+                    flt_flags[i] = ~self.bitflag_filter_item
+
         return flt_flags, flt_neworder
 
 class UL_rigidbodies(UL_ObjectsMixIn, UIList):
     mmd_type = 'RIGID_BODY'
     icon = 'MESH_ICOSPHERE'
 
+    def draw_item_special(self, context, layout, item):
+        if not item.mmd_rigid.bone:
+            layout.label(icon='BONE_DATA')
+
+class MMDRigidbodySelectMenu(Menu):
+    bl_idname = 'OBJECT_MT_mmd_tools_rigidbody_select_menu'
+    bl_label = 'Rigidbody Select Menu'
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator_context = 'INVOKE_DEFAULT'
+        layout.operator('mmd_tools.select_rigid_body', text='Select Similar...')
+        layout.separator()
+        layout.operator_context = 'EXEC_DEFAULT'
+        layout.operator_enum('mmd_tools.select_rigid_body', 'properties')
+
+class MMDRigidbodyMenu(Menu):
+    bl_idname = 'OBJECT_MT_mmd_tools_rigidbody_menu'
+    bl_label = 'Rigidbody Menu'
+
+    def draw(self, context):
+        layout = self.layout
+        layout.menu('OBJECT_MT_mmd_tools_rigidbody_select_menu', text='Select Similar')
 
 class MMDRigidbodySelectorPanel(_PanelBase, Panel):
     bl_idname = 'OBJECT_PT_mmd_tools_rigidbody_list'
@@ -593,18 +639,21 @@ class MMDRigidbodySelectorPanel(_PanelBase, Panel):
         tb1 = tb.column(align=True)
         tb1.operator(operators.rigid_body.AddRigidBody.bl_idname, text='', icon='ZOOMIN')
         tb1.operator(operators.rigid_body.RemoveRigidBody.bl_idname, text='', icon='ZOOMOUT')
-
-        if mmd_model.isRigidBodyObject(active_obj):
-            c = col.column(align=True)
-            c.enabled = active_obj.mode == 'OBJECT'
-            c.row(align=True).label(active_obj.name, icon='MESH_ICOSPHERE')
-            c.row(align=True).prop(active_obj.mmd_rigid, 'shape', expand=True)
-            c.column(align=True).prop(active_obj.mmd_rigid, 'size', text='')
+        tb1.menu('OBJECT_MT_mmd_tools_rigidbody_menu', text='', icon='DOWNARROW_HLT')
 
 
 class UL_joints(UL_ObjectsMixIn, UIList):
     mmd_type = 'JOINT'
     icon = 'CONSTRAINT'
+
+    def draw_item_special(self, context, layout, item):
+        rbc = item.rigid_body_constraint
+        if rbc is None:
+            layout.label(icon='ERROR')
+        elif rbc.object1 is None or rbc.object2 is None:
+            layout.label(icon='OBJECT_DATA')
+        elif rbc.object1 == rbc.object2:
+            layout.label(icon='MESH_CUBE')
 
 class MMDJointSelectorPanel(_PanelBase, Panel):
     bl_idname = 'OBJECT_PT_mmd_tools_joint_list'

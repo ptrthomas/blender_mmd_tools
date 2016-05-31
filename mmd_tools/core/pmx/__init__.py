@@ -355,6 +355,8 @@ class Model:
         self.joints = []
 
     def load(self, fs):
+        self.header = fs.header()
+
         self.name = fs.readStr()
         self.name_e = fs.readStr()
 
@@ -457,18 +459,20 @@ class Model:
             logging.info('Bone %d: %s', i, b.name)
             logging.debug('  Name(english): %s', b.name_e)
             logging.debug('  Location: (%f, %f, %f)', *b.location)
+            logging.debug('  displayConnection: %s', str(b.displayConnection))
             logging.debug('  Parent: %s', str(b.parent))
             logging.debug('  Transform Order: %s', str(b.transform_order))
             logging.debug('  Rotatable: %s', str(b.isRotatable))
             logging.debug('  Movable: %s', str(b.isMovable))
             logging.debug('  Visible: %s', str(b.visible))
             logging.debug('  Controllable: %s', str(b.isControllable))
-            logging.debug('  Additional Location: %s', str(b.hasAdditionalRotate))
+            logging.debug('  Additional Location: %s', str(b.hasAdditionalLocation))
             logging.debug('  Additional Rotation: %s', str(b.hasAdditionalRotate))
             if b.additionalTransform is not None:
                 logging.debug('  Additional Transform: Bone:%d, influence: %f', *b.additionalTransform)
             logging.debug('  IK: %s', str(b.isIK))
             if b.isIK:
+                logging.debug('    Target: %d', b.target)
                 for j, link in enumerate(b.ik_links):
                     if isinstance(link.minimumAngle, list) and len(link.minimumAngle) == 3:
                         min_str = '(%f, %f, %f)'%tuple(link.minimumAngle)
@@ -804,6 +808,7 @@ class Texture:
 
     def load(self, fs):
         self.path = fs.readStr()
+        self.path = self.path.replace('\\', os.path.sep)
         if not os.path.isabs(self.path):
             self.path = os.path.normpath(os.path.join(os.path.dirname(fs.path()), self.path))
 
@@ -1077,6 +1082,7 @@ class Bone:
         flags |= int(self.axis is not None) << 10
         flags |= int(self.localCoordinate is not None) << 11
 
+        flags |= int(self.transAfterPhis) << 12
         flags |= int(self.externalTransKey is not None) << 13
 
         fs.writeShort(flags)

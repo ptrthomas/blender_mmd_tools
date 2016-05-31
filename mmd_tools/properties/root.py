@@ -100,29 +100,50 @@ def _setVisibilityOfMMDRigArmature(obj, v):
 
 def _setActiveRigidbodyObject(prop, v):
     obj = bpy.context.scene.objects[v]
-    prop.show_rigid_bodies = True
-    if not obj.hide:
+    if mmd_model.isRigidBodyObject(obj):
+        obj.hide = False
         utils.selectAObject(obj)
     prop['active_rigidbody_object_index'] = v
 
 def _getActiveRigidbodyObject(prop):
+    objects = bpy.context.scene.objects
+    active_obj = objects.active
+    if active_obj and mmd_model.isRigidBodyObject(active_obj):
+        prop['active_rigidbody_object_index'] = objects.find(active_obj.name)
     return prop.get('active_rigidbody_object_index', 0)
 
 def _setActiveJointObject(prop, v):
     obj = bpy.context.scene.objects[v]
-    prop.show_joints = True
-    if not obj.hide:
+    if mmd_model.isJointObject(obj):
+        obj.hide = False
         utils.selectAObject(obj)
     prop['active_joint_object_index'] = v
 
 def _getActiveJointObject(prop):
+    objects = bpy.context.scene.objects
+    active_obj = objects.active
+    if active_obj and mmd_model.isJointObject(active_obj):
+        prop['active_joint_object_index'] = objects.find(active_obj.name)
     return prop.get('active_joint_object_index', 0)
 
 def _activeMorphReset(self, context):
     root = self.id_data
     root.mmd_root.active_morph = 0
-    
 
+def _setActiveMeshObject(prop, v):
+    obj = bpy.context.scene.objects[v]
+    if obj.type == 'MESH' and obj.mmd_type == 'NONE':
+        obj.hide = False
+        utils.selectAObject(obj)
+    prop['active_mesh_index'] = v
+    
+def _getActiveMeshObject(prop):
+    objects = bpy.context.scene.objects
+    active_obj = objects.active
+    if (active_obj and active_obj.type == 'MESH'
+            and active_obj.mmd_type == 'NONE'):
+        prop['active_mesh_index'] = objects.find(active_obj.name)
+    return prop.get('active_mesh_index', -1)
 
 #===========================================
 # Property classes
@@ -208,6 +229,12 @@ class MMDRoot(PropertyGroup):
         name='Comment (English)',
         default='',
         )
+
+#     advanced_mode = BoolProperty(
+#         name='Advanced Mode',
+#         description='This option enables advanced and experimental features',
+#         default=False,
+#         )
 
     show_meshes = BoolProperty(
         name='Show Meshes',
@@ -322,11 +349,11 @@ class MMDRoot(PropertyGroup):
         name='Active Morph Type',
         description='Active Morph Type',
         items = [
-            ('material_morphs', 'Material', '', 0),
-            ('uv_morphs', 'UV', '', 1),
-            ('bone_morphs', 'Bone', '', 2),
-            ('vertex_morphs', 'Vertex', '', 3),
-            ('group_morphs', 'Group', '', 4),
+            ('material_morphs', 'MAT', 'Material Morphs', 0),
+            ('uv_morphs', 'UV', 'UV Morphs', 1),
+            ('bone_morphs', 'BONE', 'Bone Morphs', 2),
+            ('vertex_morphs', 'VTX', 'Vertex Morphs', 3),
+            ('group_morphs', 'GRP', 'Group Morphs', 4),
             ],
         default='vertex_morphs',
         update=_activeMorphReset
@@ -335,4 +362,18 @@ class MMDRoot(PropertyGroup):
         name='Active Morph',
         min=0,
         default=0
+        )
+    editing_morphs = IntProperty(
+        name='Editing Morph',
+        description=('Internal property used to indicate that a morph is being viewed or edited. ' +
+                     'This is used as safety check to prevent some operations.'),
+        default=0, 
+        min=0,
+        )
+    active_mesh_index = IntProperty(
+        name='Active Mesh',
+        description='Active Mesh in this model',
+        default=-1,
+        set=_setActiveMeshObject,
+        get=_getActiveMeshObject,
         )

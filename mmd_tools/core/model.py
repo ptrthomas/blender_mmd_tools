@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 
 import bpy
-from bpy.types import Operator
 import mathutils
 
 from mmd_tools import bpyutils
@@ -82,12 +81,11 @@ class Model:
 
     @classmethod
     def findRoot(cls, obj):
-        if obj.mmd_type == 'ROOT':
-            return obj
-        elif obj.parent is not None:
+        if obj:
+            if obj.mmd_type == 'ROOT':
+                return obj
             return cls.findRoot(obj.parent)
-        else:
-            return None
+        return None
 
     def initialDisplayFrames(self):
         frames = self.__root.mmd_root.display_item_frames
@@ -140,6 +138,7 @@ class Model:
         obj.rotation_euler = rotation
         obj.hide_render = True
         obj.mmd_type = 'RIGID_BODY'
+        obj.parent = self.rigidGroupObject()
 
         obj.mmd_rigid.shape = rigid_body.collisionShape(shape_type)
         obj.mmd_rigid.size = size
@@ -163,6 +162,8 @@ class Model:
         if name_e is not None:
             obj.mmd_rigid.name_e = name_e
 
+        obj.mmd_rigid.bone = bone if bone else ''
+
         rb = obj.rigid_body
         if friction is not None:
             rb.friction = friction
@@ -175,14 +176,6 @@ class Model:
         if bounce:
             rb.restitution = bounce
 
-        constraint = obj.constraints.new('CHILD_OF')
-        constraint.target = self.armature()
-        if bone is not None and bone != '':
-            constraint.subtarget = bone
-        constraint.name = 'mmd_tools_rigid_parent'
-        constraint.mute = True
-
-        obj.parent = self.rigidGroupObject()
         obj.select = False
         self.__root.mmd_root.is_built = False
         return obj
@@ -223,6 +216,7 @@ class Model:
             'J.'+name,
             None)
         bpy.context.scene.objects.link(obj)
+        bpy.context.scene.objects.active = obj
         obj.mmd_type = 'JOINT'
         obj.mmd_joint.name_j = name
         if name_e is not None:
@@ -234,10 +228,8 @@ class Model:
         obj.empty_draw_size = size
         obj.empty_draw_type = 'ARROWS'
         obj.hide_render = True
-        obj.parent = self.armature()
 
-        with bpyutils.select_object(obj):
-            bpy.ops.rigidbody.constraint_add(type='GENERIC_SPRING')
+        bpy.ops.rigidbody.constraint_add(type='GENERIC_SPRING')
         rbc = obj.rigid_body_constraint
 
         rbc.object1 = rigid_a
@@ -295,8 +287,8 @@ class Model:
 
         """
         ik_target_name = ik_target.name
-        print((ik_target.head - bone.tail).length)
         if (ik_target.head - bone.tail).length > threshold:
+            logging.debug('*** create a ik_target_dummy of bone %s', ik_target.name)
             with bpyutils.edit_object(self.__arm) as data:
                 dummy_target = data.edit_bones.new(name=ik_target.name + '.ik_target_dummy')
                 dummy_target.head = bone.tail
@@ -396,6 +388,34 @@ class Model:
             return i
         return None
 
+    def findMesh(self, mesh_name):
+        """
+        Helper method to find a mesh by name
+        """
+        for mesh in self.meshes():
+            if mesh.name == mesh_name or mesh.data.name == mesh_name:
+                return mesh
+        return None
+
+    def findMeshByIndex(self, index):
+        """
+        Helper method to find the mesh by index
+        """
+        for i, mesh in enumerate(self.meshes()):
+            if i == index:
+                return mesh
+
+        return None
+
+    def getMeshIndex(self, mesh_name):
+        """
+        Helper method to get the index of a mesh. Returns -1 if not found
+        """
+        for i, mesh in enumerate(self.meshes()):
+            if mesh.name == mesh_name or mesh.data.name == mesh_name:
+                return i
+        return -1
+
     def rigidBodies(self):
         return filter(isRigidBodyObject, self.allObjects(self.rigidGroupObject()))
 
@@ -404,6 +424,18 @@ class Model:
 
     def temporaryObjects(self):
         return filter(isTemporaryObject, self.allObjects(self.rigidGroupObject())+self.allObjects(self.temporaryGroupObject()))
+
+    def materials(self):
+        """
+        Helper method to list all materials in all meshes
+        """
+        material_list = []
+        for mesh in self.meshes():
+            for mat in mesh.data.materials:
+                if mat not in material_list:
+                    # control the case of a material shared among different meshes
+                    material_list.append(mat)
+        return material_list
 
     def renameBone(self, old_bone_name, new_bone_name):
         armature = self.armature()
@@ -464,12 +496,7 @@ class Model:
                 rigid = i.parent
                 bone = track_to_bone_map.get(i)
                 logging.info('Create a "CHILD_OF" constraint for %s', rigid.name)
-                constraint = rigid.constraints.new('CHILD_OF')
-                constraint.target = arm
-                if bone is not None:
-                    constraint.subtarget = bone.name
-                constraint.name = 'mmd_tools_rigid_parent'
-                constraint.mute = True
+                rigid.mmd_rigid.bone = bone.name
                 bpy.context.scene.objects.unlink(i)
                 bpy.data.objects.remove(i)
 
@@ -507,7 +534,7 @@ class Model:
         logging.debug(' Removing %d children of temporary group object', tmp_cnt)
         start_time = time.time()
         total_cnt = len(bpy.data.objects)
-        layer_index = list(bpy.context.scene.layers).index(True)
+        layer_index = bpy.context.scene.active_layer
         try:
             bpy.ops.object.mode_set(mode='OBJECT')
         except Exception:
@@ -661,11 +688,7 @@ class Model:
                         empty.select = False
                         empty.hide = True
                         # revert change
-                        const = ori_rigid_obj.constraints.new('CHILD_OF')
-                        const.target = arm
-                        const.subtarget = bone_name
-                        const.name = 'mmd_tools_rigid_parent'
-                        const.mute = True
+                        ori_rigid_obj.mmd_rigid.bone = bone_name
                     else:
                         logging.info('        * Bone (%s): track target [%s]',
                             target_bone.name, ori_rigid_obj.name)

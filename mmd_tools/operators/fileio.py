@@ -3,12 +3,14 @@
 import logging
 import re
 import traceback
+import os
 
 import bpy
 from bpy.types import Operator
 from bpy_extras.io_utils import ImportHelper, ExportHelper
 
 from mmd_tools import auto_scene_setup
+from mmd_tools.utils import selectAObject
 
 import mmd_tools.core.pmd.importer as pmd_importer
 import mmd_tools.core.pmx.importer as pmx_importer
@@ -221,6 +223,11 @@ class ExportPmx(Operator, ExportHelper):
     filter_glob = bpy.props.StringProperty(default='*.pmx', options={'HIDDEN'})
 
     copy_textures = bpy.props.BoolProperty(name='Copy textures', default=True)
+    sort_materials = bpy.props.BoolProperty(name='Sort Materials', default=False,
+                                            description=('Sort materials for alpha blending. '
+                                                         'WARNING: Will not work if you have ' +
+                                                         'transparent meshes inside the model. ' +
+                                                         'E.g. blush meshes'))
 
     log_level = bpy.props.EnumProperty(items=LOG_LEVEL_ITEMS, name='Log level', default='DEBUG')
     save_log = bpy.props.BoolProperty(name='Create a log file', default=False)
@@ -239,8 +246,26 @@ class ExportPmx(Operator, ExportHelper):
             logger.addHandler(handler)
 
         root = mmd_model.Model.findRoot(context.active_object)
+        if root.mmd_root.editing_morphs > 0:
+            # We have two options here: 
+            # 1- report it to the user
+            # 2- clear the active morphs (user will loose any changes to temp materials and UV) 
+            bpy.ops.mmd_tools.clear_temp_materials()
+            bpy.ops.mmd_tools.clear_uv_morph_view()        
+            self.report({ 'WARNING' }, "Active editing morphs were cleared")
+            # return { 'CANCELLED' }
         rig = mmd_model.Model(root)
         rig.clean()
+        # Clear the pose before exporting
+        if rig.armature():
+            prev_show = root.mmd_root.show_armature
+            root.mmd_root.show_armature = True
+            selectAObject(rig.armature())
+            bpy.ops.object.mode_set(mode='POSE')
+            bpy.ops.pose.select_all(action='SELECT')
+            bpy.ops.pose.transforms_clear()
+            bpy.ops.object.mode_set(mode='OBJECT')
+            root.mmd_root.show_armature = prev_show
         try:
             pmx_exporter.export(
                 filepath=self.filepath,
@@ -251,6 +276,7 @@ class ExportPmx(Operator, ExportHelper):
                 rigid_bodies=rig.rigidBodies(),
                 joints=rig.joints(),
                 copy_textures=self.copy_textures,
+                sort_materials=self.sort_materials,
                 )
         finally:
             if self.save_log:
