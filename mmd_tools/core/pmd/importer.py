@@ -36,6 +36,7 @@ def import_pmd_to_pmx(filepath):
     logging.info('')
 
     pmx_model = pmx.Model()
+    pmx_model.filepath = filepath
 
     pmx_model.name = pmd_model.name
     pmx_model.name_e = pmd_model.name_e
@@ -55,7 +56,7 @@ def import_pmd_to_pmx(filepath):
         pmx_v.normal = v.normal
         pmx_v.uv = v.uv
         pmx_v.additional_uvs= []
-        pmx_v.edge_scale = 1
+        pmx_v.edge_scale = 1 if v.enable_edge == 0 else 0
 
         weight = pmx.BoneWeight()
         if v.bones[0] != v.bones[1]:
@@ -105,13 +106,20 @@ def import_pmd_to_pmx(filepath):
             pass
         elif bone.type == 2:
             pmx_bone.transform_order = 1
+        elif bone.type == 3:
+            pmx_bone.isMovable = False
         elif bone.type == 4:
             pmx_bone.isMovable = False
         elif bone.type == 5:
+            pmx_bone.isMovable = False
             pmx_bone.hasAdditionalRotate = True
             pmx_bone.additionalTransform = (bone.ik_bone, 1.0)
+        elif bone.type == 6:
+            pmx_bone.visible = False
+            pmx_bone.isMovable = False
         elif bone.type == 7:
             pmx_bone.visible = False
+            pmx_bone.isMovable = False
         elif bone.type == 8:
             pmx_bone.isMovable = False
             tail_loc=mathutils.Vector(pmd_model.bones[bone.tail_bone].position)
@@ -121,6 +129,7 @@ def import_pmd_to_pmx(filepath):
             pmx_bone.axis=list(vec)
         elif bone.type == 9:
             pmx_bone.visible = False
+            pmx_bone.isMovable = False
             pmx_bone.hasAdditionalRotate = True
             pmx_bone.additionalTransform = (bone.tail_bone, float(bone.ik_bone)/100.0)
 

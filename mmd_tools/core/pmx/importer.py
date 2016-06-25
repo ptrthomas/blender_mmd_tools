@@ -78,7 +78,11 @@ class PMXImporter:
         """
         pmxModel = self.__model
         self.__rig = mmd_model.Model.create(pmxModel.name, pmxModel.name_e, self.__scale)
-        mmd_root = self.__rig.rootObject().mmd_root
+        root = self.__rig.rootObject()
+        mmd_root = root.mmd_root
+
+        root['import_folder'] = os.path.dirname(pmxModel.filepath)
+
         txt = bpy.data.texts.new(pmxModel.name+'_comment')
         txt.from_string(pmxModel.comment.replace('\r', ''))
         txt.current_line_index = 0
@@ -90,9 +94,9 @@ class PMXImporter:
 
         self.__armObj = self.__rig.armature()
         self.__armObj.hide = True
-        
+
         # Temporarily set the root object as active to let property function hooks access it.
-        self.__targetScene.objects.active = self.__rig.rootObject()
+        self.__targetScene.objects.active = root
 
     def __createMeshObject(self):
         model_name = self.__model.name
@@ -104,12 +108,14 @@ class PMXImporter:
         self.__vertexGroupTable = []
         for i in self.__model.bones:
             self.__vertexGroupTable.append(self.__meshObj.vertex_groups.new(name=i.name))
+        self.__vertexGroupTable.append(self.__meshObj.vertex_groups.new(name='mmd_edge_scale'))
 
     def __importVertices(self):
         self.__importVertexGroup()
 
         pmxModel = self.__model
         mesh = self.__meshObj.data
+        vg_edge_scale = self.__vertexGroupTable[-1]
 
         mesh.vertices.add(count=len(self.__model.vertices))
         for i, pv in enumerate(pmxModel.vertices):
@@ -117,6 +123,7 @@ class PMXImporter:
 
             bv.co = mathutils.Vector(pv.co) * self.TO_BLE_MATRIX * self.__scale
             #bv.normal = pv.normal # no effect
+            vg_edge_scale.add(index=[i], weight=pv.edge_scale, type='REPLACE')
 
             if isinstance(pv.weight.weights, pmx.BoneWeightSDEF):
                 self.__vertexGroupTable[pv.weight.bones[0]].add(index=[i], weight=pv.weight.weights.weight, type='REPLACE')
@@ -274,7 +281,7 @@ class PMXImporter:
             #if re.search(u'先$', pmx_bone.name):
             #    b_bone.mmd_bone.is_tip = True
 
-            b_bone.bone.hide = b_bone.mmd_bone.is_tip or not pmx_bone.visible
+            b_bone.bone.hide = not pmx_bone.visible #or b_bone.mmd_bone.is_tip
 
             if not pmx_bone.isRotatable:
                 b_bone.lock_rotation = [True, True, True]
