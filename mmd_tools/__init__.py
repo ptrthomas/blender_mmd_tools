@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+import os
 import logging
 import bpy
 from bpy.types import AddonPreferences
@@ -50,6 +51,7 @@ class MMDToolsAddonPreferences(AddonPreferences):
             name="Shared Toon Texture Folder",
             description=('Directory path to toon textures. This is normally the ' +
                          '"Data" directory within of your MikuMikuDance directory'),
+            default=os.path.dirname(os.path.abspath(__file__)) + os.path.sep + "textures",
             subtype='DIR_PATH',
             )
     base_texture_folder = StringProperty(
