@@ -58,7 +58,7 @@ class MMDToolsAddonPreferences(AddonPreferences):
             name='Base Texture Folder',
             description=('This directory path will be used to determine the relative ' +
                          'path of the textures you use'),
-            subtype='DIR_PATH',
+            subtype='DIR_PATH'            
             )
 
     def draw(self, context):
