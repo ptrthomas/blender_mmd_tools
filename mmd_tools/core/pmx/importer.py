@@ -489,11 +489,10 @@ class PMXImporter:
             mat_morph.name_e = morph.name_e
             mat_morph.category = categories.get(morph.category, 'OTHER')
             for morph_data in morph.offsets:
-                if not (0 <= morph_data.index < len(self.__materialTable)):
-                    continue
                 data = mat_morph.data.add()
                 data.related_mesh = self.__meshObj.data.name
-                data.material = self.__materialTable[morph_data.index].name
+                if 0 <= morph_data.index < len(self.__materialTable):
+                    data.material = self.__materialTable[morph_data.index].name
                 data.offset_type = ['MULT', 'ADD'][morph_data.offset_type]
                 data.diffuse_color = morph_data.diffuse_offset
                 data.specular_color = morph_data.specular_offset
@@ -585,6 +584,7 @@ class PMXImporter:
         armModifier = meshObj.modifiers.new(name='Armature', type='ARMATURE')
         armModifier.object = armObj
         armModifier.use_vertex_groups = True
+        armModifier.name='mmd_bone_order_override'
 
     def __assignCustomNormals(self):
         mesh = self.__meshObj.data
@@ -646,6 +646,10 @@ class PMXImporter:
             self.__assignCustomNormals()
 
         if 'ARMATURE' in types:
+            # for tracking bone order
+            if 'MESH' not in types:
+                self.__createMeshObject()
+                self.__importVertexGroup()
             self.__importBones()
             if args.get('rename_LR_bones', False):
                 self.__renameLRBones()

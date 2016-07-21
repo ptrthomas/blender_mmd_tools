@@ -231,7 +231,7 @@ class __PmxExporter:
         else:
             return cls.__countBoneDepth(bone.parent) + 1
 
-    def __exportBones(self):
+    def __exportBones(self, meshes):
         """ Export bones.
         Returns:
             A dictionary to map Blender bone names to bone indices of the pmx.model instance.
@@ -243,12 +243,17 @@ class __PmxExporter:
         world_mat = arm.matrix_world
         r = {}
 
-        # sort by a depth of bones.
-        #t = []
-        #for i in pose_bones:
-        #    t.append((i, self.__countBoneDepth(i)))
+        # determine the bone order
+        vtx_grps = {}
+        for mesh in meshes:
+            if mesh.modifiers.get('mmd_bone_order_override', None):
+                vtx_grps = mesh.vertex_groups
+                break
 
-        sorted_bones = sorted(pose_bones, key=self.__countBoneDepth)
+        class _Dummy:
+            index = float('inf')
+        sorted_bones = sorted(pose_bones, key=lambda x: vtx_grps.get(x.name, _Dummy).index)
+        #sorted_bones = sorted(pose_bones, key=self.__countBoneDepth)
 
         with bpyutils.edit_object(arm) as data:
             for p_bone in sorted_bones:
@@ -270,6 +275,7 @@ class __PmxExporter:
                 pmx_bone.name_e = p_bone.mmd_bone.name_e or ''
                 pmx_bone.location = world_mat * mathutils.Vector(bone.head) * self.__scale * self.TO_PMX_MATRIX
                 pmx_bone.parent = bone.parent
+                pmx_bone.transform_order = mmd_bone.transform_order
                 pmx_bone.visible = mmd_bone.is_visible
                 pmx_bone.isControllable = mmd_bone.is_controllable
                 pmx_bone.isMovable = not all(p_bone.lock_location)
@@ -316,6 +322,16 @@ class __PmxExporter:
 
                 pose_bone = i.additionalTransform[0]
                 i.additionalTransform[0] = r.get(pose_bone.name, -1) if pose_bone else -1
+
+            if len(pmx_bones) == 0:
+                # avoid crashing MMD
+                pmx_bone = pmx.Bone()
+                pmx_bone.name = u'全ての親'
+                pmx_bone.name_e = 'Root'
+                pmx_bone.location = world_mat * mathutils.Vector([0,0,0]) * self.__scale * self.TO_PMX_MATRIX
+                tail_loc = world_mat * mathutils.Vector([0,0,1]) * self.__scale * self.TO_PMX_MATRIX
+                pmx_bone.displayConnection = tail_loc - pmx_bone.location
+                pmx_bones.append(pmx_bone)
 
             self.__model.bones = pmx_bones
         return r
@@ -397,7 +413,6 @@ class __PmxExporter:
                     pmx_ik_bone.isIK = True
                     pmx_ik_bone.loopCount = c.iterations
                     pmx_ik_bone.rotationConstraint = bone.mmd_bone.ik_rotation_constraint
-                    pmx_ik_bone.transform_order += 1
                     pmx_ik_bone.target = bone_map[ik_target_bone.name]
                     pmx_ik_bone.ik_links = self.__exportIKLinks(bone, pmx_bones, bone_map, [], c.chain_count)
 
@@ -478,7 +493,10 @@ class __PmxExporter:
             for data in morph.data:
                 morph_data = pmx.MaterialMorphOffset()
                 try:
-                    morph_data.index = self.__material_name_table.index(data.material)
+                    if data.material != '':
+                        morph_data.index = self.__material_name_table.index(data.material)
+                    else:
+                        morph_data.index = -1
                 except ValueError:
                     logging.warning('Material Morph (%s): Material %s was not found.', morph.name, data.material)
                     continue
@@ -972,6 +990,7 @@ class __PmxExporter:
                 self.__vertex_index_map = None # has_uv_morphs = True
 
         meshes = args.get('meshes', [])
+        meshes = tuple(meshes) # ??? a filter object can only iterate once
         self.__armature = args.get('armature', None)
         rigid_bodeis = args.get('rigid_bodies', [])
         joints = args.get('joints', [])        
@@ -982,12 +1001,17 @@ class __PmxExporter:
         self.sortMaterials = args.get('sort_materials', False)
 
 
-        nameMap = self.__exportBones()
+        nameMap = self.__exportBones(meshes)
         self.__exportIK(nameMap)
 
         mesh_data = []
         for i in meshes:
-            mesh_data.append(self.__loadMeshData(i, nameMap))
+            show_only_shape_key = i.show_only_shape_key
+            try:
+                i.show_only_shape_key = False
+                mesh_data.append(self.__loadMeshData(i, nameMap))
+            finally:
+                i.show_only_shape_key = show_only_shape_key
 
         self.__exportMeshes(mesh_data, nameMap)
         self.__exportVertexMorphs(mesh_data, root)

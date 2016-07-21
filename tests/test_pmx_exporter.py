@@ -212,9 +212,12 @@ class TestPmxExporter(unittest.TestCase):
         result_bones = result_model.bones
         self.assertEqual(len(source_bones), len(result_bones))
 
-        source_table = sorted(source_bones, key=lambda x: x.name)
-        result_table = sorted(result_bones, key=lambda x: x.name)
-        for bone0, bone1 in zip(source_table, result_table):
+        # check bone order
+        bone_order0 = [x.name for x in source_bones]
+        bone_order1 = [x.name for x in result_bones]
+        self.assertEqual(bone_order0, bone_order1)
+
+        for bone0, bone1 in zip(source_bones, result_bones):
             msg = bone0.name
             self.assertEqual(bone0.name, bone1.name)
             self.assertEqual(bone0.name_e, bone1.name_e, msg)
@@ -224,7 +227,7 @@ class TestPmxExporter(unittest.TestCase):
             parent1 = self.__get_bone_name(bone1.parent, result_bones)
             self.assertEqual(parent0, parent1, msg)
 
-            #self.assertEqual(bone0.transform_order, bone1.transform_order, msg) #TODO
+            self.assertEqual(bone0.transform_order, bone1.transform_order, msg)
             self.assertEqual(bone0.isRotatable, bone1.isRotatable, msg)
             self.assertEqual(bone0.isMovable, bone1.isMovable, msg)
             self.assertEqual(bone0.visible, bone1.visible, msg)
@@ -277,7 +280,7 @@ class TestPmxExporter(unittest.TestCase):
                 else:
                     self.assertEqual(minimumAngle0, minimumAngle1, msg)
 
-        for bone0, bone1 in zip(source_table, result_table):
+        for bone0, bone1 in zip(source_bones, result_bones):
             msg = bone0.name
             displayConnection0 = self.__get_bone_display_connection(bone0, source_bones)
             displayConnection1 = self.__get_bone_display_connection(bone1, result_bones)
@@ -373,6 +376,12 @@ class TestPmxExporter(unittest.TestCase):
     #********************************************
     # Morphs
     #********************************************
+    def __get_material(self, index, materials):
+        if 0 <= index < len(materials):
+            return materials[index]
+        class _dummy:
+            name = None
+        return _dummy
 
     def __check_pmx_morphs(self, source_model, result_model):
         '''
@@ -460,13 +469,12 @@ class TestPmxExporter(unittest.TestCase):
             self.assertEqual(m0.name, m1.name, msg)
             self.assertEqual(m0.name_e, m1.name_e, msg)
             self.assertEqual(m0.category, m1.category, msg)
-            # the source may contains invalid data
-            source_offsets = [m for m in m0.offsets if 0 <= m.index < len(source_materials)]
+            source_offsets = m0.offsets
             result_offsets = m1.offsets
             self.assertEqual(len(source_offsets), len(result_offsets), msg)
             for s0, s1 in zip(source_offsets, result_offsets):
-                mat0 = source_materials[s0.index]
-                mat1 = result_materials[s1.index]
+                mat0 = self.__get_material(s0.index, source_materials)
+                mat1 = self.__get_material(s1.index, result_materials)
                 self.assertEqual(mat0.name, mat1.name, msg)
                 self.assertEqual(s0.offset_type, s1.offset_type, msg)
                 self.assertEqual(s0.diffuse_offset, s1.diffuse_offset, msg)
