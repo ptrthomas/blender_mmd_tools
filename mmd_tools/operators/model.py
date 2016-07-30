@@ -15,7 +15,7 @@ class CleanRiggingObjects(Operator):
 
     def execute(self, context):
         obj = context.active_object
-        root = mmd_model.Model.findRoot(context.active_object)
+        root = mmd_model.Model.findRoot(obj)
         rig = mmd_model.Model(root)
         rig.clean()
         context.scene.objects.active = obj
@@ -24,21 +24,21 @@ class CleanRiggingObjects(Operator):
 class BuildRig(Operator):
     bl_idname = 'mmd_tools.build_rig'
     bl_label = 'Build'
-    bl_description = ''
+    bl_description = 'Build the physics of rigging'
     bl_options = {'PRESET'}
 
     def execute(self, context):
         obj = context.active_object
-        root = mmd_model.Model.findRoot(context.active_object)
+        root = mmd_model.Model.findRoot(obj)
         rig = mmd_model.Model(root)
         rig.build()
         context.scene.objects.active = obj
         return {'FINISHED'}
 
-class ApplyAdditionalTransformConstraints(Operator):
-    bl_idname = 'mmd_tools.apply_additioinal_transform'
-    bl_label = 'Apply Additional Transform'
-    bl_description = ''
+class CleanAdditionalTransformConstraints(Operator):
+    bl_idname = 'mmd_tools.clean_additioinal_transform'
+    bl_label = 'Clean Additional Transform'
+    bl_description = 'Clean additional transform constraints and shadow bones of rigging'
     bl_options = {'PRESET'}
 
     @classmethod
@@ -46,20 +46,52 @@ class ApplyAdditionalTransformConstraints(Operator):
         return mmd_model.Model.findRoot(context.active_object)
 
     def execute(self, context):
-        root = mmd_model.Model.findRoot(context.active_object)
-        mmd_model.Model(root).applyAdditionalTransformConstraints()
-        #context.scene.objects.active = obj
+        obj = context.active_object
+        root = mmd_model.Model.findRoot(obj)
+        rig = mmd_model.Model(root)
+        rig.cleanAdditionalTransformConstraints()
+        context.scene.objects.active = obj
+        return {'FINISHED'}
+
+class ApplyAdditionalTransformConstraints(Operator):
+    bl_idname = 'mmd_tools.apply_additioinal_transform'
+    bl_label = 'Apply Additional Transform'
+    bl_description = 'Apply additional move/rotate settings of rigging'
+    bl_options = {'PRESET'}
+
+    @classmethod
+    def poll(cls, context):
+        return mmd_model.Model.findRoot(context.active_object)
+
+    def execute(self, context):
+        obj = context.active_object
+        root = mmd_model.Model.findRoot(obj)
+        rig = mmd_model.Model(root)
+        rig.applyAdditionalTransformConstraints()
+        context.scene.objects.active = obj
         return {'FINISHED'}
 
 class CreateMMDModelRoot(Operator):
     bl_idname = 'mmd_tools.create_mmd_model_root_object'
     bl_label = 'Create a MMD Model Root Object'
-    bl_description = ''
+    bl_description = 'Create a MMD model root object with a basic armature'
     bl_options = {'PRESET'}
 
-    name_j = bpy.props.StringProperty(name='Name', default='New MMD Model')
-    name_e = bpy.props.StringProperty(name='Name(Eng)', default='New MMD Model')
-    scale = bpy.props.FloatProperty(name='Scale', default=0.2)
+    name_j = bpy.props.StringProperty(
+        name='Name',
+        description='The name of the MMD model',
+        default='New MMD Model',
+        )
+    name_e = bpy.props.StringProperty(
+        name='Name(Eng)',
+        description='The english name of the MMD model',
+        default='New MMD Model',
+        )
+    scale = bpy.props.FloatProperty(
+        name='Scale',
+        description='Scale',
+        default=0.2,
+        )
 
     def execute(self, context):
         rig = mmd_model.Model.create(self.name_j, self.name_e, self.scale)

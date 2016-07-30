@@ -70,8 +70,10 @@ class Model:
         root.lock_scale = [True, True, True]
 
         arm = bpy.data.armatures.new(name=name)
+        #arm.draw_type = 'STICK'
         armObj = bpy.data.objects.new(name=name+'_arm', object_data=arm)
         armObj.lock_rotation = armObj.lock_location = armObj.lock_scale = [True, True, True]
+        armObj.show_x_ray = True
         armObj.parent = root
 
         scene.objects.link(root)
@@ -851,8 +853,25 @@ class Model:
             i.location = t
             i.rotation_euler = r.to_euler(i.rotation_mode)
 
-    def applyAdditionalTransformConstraints(self, force=False):
+    def cleanAdditionalTransformConstraints(self):
+        FnBone.clean_additional_transformation(self.armature())
+
+    def applyAdditionalTransformConstraints(self):
         arm = self.armature()
+        # detach armature modifier for improving performance
+        detached = []
+        for mesh in self.meshes():
+            for m in mesh.modifiers:
+                if m.type == 'ARMATURE' and m.object == arm:
+                    m.object = None
+                    detached.append(m)
+        try:
+            self.__applyAdditionalTransformConstraints(arm)
+        finally:
+            for m in detached: # store back
+                m.object = arm
+
+    def __applyAdditionalTransformConstraints(self, arm):
         fnBone = FnBone()
         for bone in arm.pose.bones[:]:
             fnBone.pose_bone = bone

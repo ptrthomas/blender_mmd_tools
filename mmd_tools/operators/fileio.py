@@ -11,6 +11,7 @@ from bpy_extras.io_utils import ImportHelper, ExportHelper
 
 from mmd_tools import auto_scene_setup
 from mmd_tools.utils import selectAObject
+from mmd_tools.utils import makePmxBoneMap
 
 import mmd_tools.core.pmd.importer as pmd_importer
 import mmd_tools.core.pmx.importer as pmx_importer
@@ -66,8 +67,8 @@ class ImportPmx(Operator, ImportHelper):
         description='Select which parts will be imported',
         options={'ENUM_FLAG'},
         items = [
-            ('MESH', 'Mesh', '', 1),
-            ('ARMATURE', 'Armature', '', 2),
+            ('MESH', 'Mesh', 'Mesh', 1),
+            ('ARMATURE', 'Armature', 'Armature', 2),
             ('PHYSICS', 'Physics', 'Rigidbodies and joints (include Armature)', 4),
             ('DISPLAY', 'Display', 'Display frames (include Armature)', 8),
             ('MORPHS', 'Morphs', 'Morphs (include Armature and Mesh)', 16),
@@ -75,13 +76,42 @@ class ImportPmx(Operator, ImportHelper):
         default={'MESH', 'ARMATURE', 'PHYSICS', 'DISPLAY', 'MORPHS',},
         update=_update_types,
         )
-    scale = bpy.props.FloatProperty(name='Scale', default=0.2)
-    renameBones = bpy.props.BoolProperty(name='Rename bones', default=True)
-    use_mipmap = bpy.props.BoolProperty(name='use MIP maps for UV textures', default=True)
-    sph_blend_factor = bpy.props.FloatProperty(name='influence of .sph textures', default=1.0)
-    spa_blend_factor = bpy.props.FloatProperty(name='influence of .spa textures', default=1.0)
-    log_level = bpy.props.EnumProperty(items=LOG_LEVEL_ITEMS, name='Log level', default='DEBUG')
-    save_log = bpy.props.BoolProperty(name='Create a log file', default=False)
+    scale = bpy.props.FloatProperty(
+        name='Scale',
+        description='Scaling factor for importing the model',
+        default=0.2,
+        )
+    renameBones = bpy.props.BoolProperty(
+        name='Rename bones',
+        description='Rename the bones to be more blender suitable',
+        default=True,
+        )
+    use_mipmap = bpy.props.BoolProperty(
+        name='use MIP maps for UV textures',
+        description='Specify if mipmaps will be generated',
+        default=True,
+        )
+    sph_blend_factor = bpy.props.FloatProperty(
+        name='influence of .sph textures',
+        description='The diffuse color factor of texture slot for .sph textures',
+        default=1.0,
+        )
+    spa_blend_factor = bpy.props.FloatProperty(
+        name='influence of .spa textures',
+        description='The diffuse color factor of texture slot for .spa textures',
+        default=1.0,
+        )
+    log_level = bpy.props.EnumProperty(
+        name='Log level',
+        description='Select log level',
+        items=LOG_LEVEL_ITEMS,
+        default='DEBUG',
+        )
+    save_log = bpy.props.BoolProperty(
+        name='Create a log file',
+        description='Create a log file',
+        default=False,
+        )
 
     def execute(self, context):
         logger = logging.getLogger()
@@ -128,9 +158,32 @@ class ImportVmd(Operator, ImportHelper):
     filename_ext = '.vmd'
     filter_glob = bpy.props.StringProperty(default='*.vmd', options={'HIDDEN'})
 
-    scale = bpy.props.FloatProperty(name='Scale', default=0.2)
-    margin = bpy.props.IntProperty(name='Margin', default=0, min=0)
-    update_scene_settings = bpy.props.BoolProperty(name='Update scene settings', default=True)
+    scale = bpy.props.FloatProperty(
+        name='Scale',
+        description='Scaling factor for importing the motion',
+        default=0.2,
+        )
+    margin = bpy.props.IntProperty(
+        name='Margin',
+        description='How many frames added before motion starting',
+        min=0,
+        default=0,
+        )
+    bone_mapper = bpy.props.EnumProperty(
+        name='Bone Mapper',
+        description='Select bone mapper',
+        items=[
+            ('BLENDER', 'Blender', 'Use blender bone name', 0),
+            ('PMX', 'PMX', 'Use japanese name of MMD bone', 1),
+            ('RENAMED_BONES', 'Renamed bones', 'Rename the bone of motion data to be blender suitable', 2),
+            ],
+        default='PMX',
+        )
+    update_scene_settings = bpy.props.BoolProperty(
+        name='Update scene settings',
+        description='Update frame range and frame rate (30 fps)',
+        default=True,
+        )
 
     @classmethod
     def poll(cls, context):
@@ -154,7 +207,19 @@ class ImportVmd(Operator, ImportHelper):
                         hidden_obj.append(m)
                     m.select = True
 
-        importer = vmd_importer.VMDImporter(filepath=self.filepath, scale=self.scale, frame_margin=self.margin)
+        bone_mapper = None
+        if self.bone_mapper == 'PMX':
+            bone_mapper = makePmxBoneMap
+        elif self.bone_mapper == 'RENAMED_BONES':
+            bone_mapper = vmd_importer.RenamedBoneMapper
+
+        importer = vmd_importer.VMDImporter(
+            filepath=self.filepath,
+            scale=self.scale,
+            bone_mapper=bone_mapper,
+            frame_margin=self.margin,
+            )
+
         for i in context.selected_objects:
             importer.assign(i)
         if self.update_scene_settings:
@@ -175,45 +240,6 @@ class ImportVmd(Operator, ImportHelper):
         return {'RUNNING_MODAL'}
 
 
-class ImportVmdToMMDModel(Operator, ImportHelper):
-    bl_idname = 'mmd_tools.import_vmd_to_mmd_model'
-    bl_label = 'Import VMD file To MMD Model'
-    bl_description = 'Import a VMD file (.vmd)'
-    bl_options = {'PRESET'}
-
-    filename_ext = '.vmd'
-    filter_glob = bpy.props.StringProperty(default='*.vmd', options={'HIDDEN'})
-
-    margin = bpy.props.IntProperty(name='Margin', default=5, min=0)
-    update_scene_settings = bpy.props.BoolProperty(name='Update scene settings', default=True)
-
-    def execute(self, context):
-        obj = context.active_object
-        root = mmd_model.Model.findRoot(obj)
-        rig = mmd_model.Model(root)
-        importer = vmd_importer.VMDImporter(filepath=self.filepath, scale=root.mmd_root.scale, frame_margin=self.margin)
-        arm = rig.armature()
-        t = arm.hide
-        arm.hide = False
-        importer.assign(arm)
-        arm.hide = t
-        for i in rig.meshes():
-            t = i.hide
-            i.hide = False
-            importer.assign(i)
-            i.hide = t
-        if self.update_scene_settings:
-            auto_scene_setup.setupFrameRanges()
-            auto_scene_setup.setupFps()
-
-        return {'FINISHED'}
-
-    def invoke(self, context, event):
-        wm = context.window_manager
-        wm.fileselect_add(self)
-        return {'RUNNING_MODAL'}
-
-
 class ExportPmx(Operator, ExportHelper):
     bl_idname = 'mmd_tools.export_pmx'
     bl_label = 'Export PMX file (.pmx)'
@@ -223,15 +249,31 @@ class ExportPmx(Operator, ExportHelper):
     filename_ext = '.pmx'
     filter_glob = bpy.props.StringProperty(default='*.pmx', options={'HIDDEN'})
 
-    copy_textures = bpy.props.BoolProperty(name='Copy textures', default=True)
-    sort_materials = bpy.props.BoolProperty(name='Sort Materials', default=False,
-                                            description=('Sort materials for alpha blending. '
-                                                         'WARNING: Will not work if you have ' +
-                                                         'transparent meshes inside the model. ' +
-                                                         'E.g. blush meshes'))
+    copy_textures = bpy.props.BoolProperty(
+        name='Copy textures',
+        description='Copy textures',
+        default=True,
+        )
+    sort_materials = bpy.props.BoolProperty(
+        name='Sort Materials',
+        description=('Sort materials for alpha blending. '
+                     'WARNING: Will not work if you have ' +
+                     'transparent meshes inside the model. ' +
+                     'E.g. blush meshes'),
+        default=False,
+        )
 
-    log_level = bpy.props.EnumProperty(items=LOG_LEVEL_ITEMS, name='Log level', default='DEBUG')
-    save_log = bpy.props.BoolProperty(name='Create a log file', default=False)
+    log_level = bpy.props.EnumProperty(
+        name='Log level',
+        description='Select log level',
+        items=LOG_LEVEL_ITEMS,
+        default='DEBUG',
+        )
+    save_log = bpy.props.BoolProperty(
+        name='Create a log file',
+        description='Create a log file',
+        default=False,
+        )
 
     @classmethod
     def poll(cls, context):

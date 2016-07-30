@@ -13,6 +13,7 @@ from mmd_tools.core import pmx
 from mmd_tools.core.bone import FnBone
 from mmd_tools.core.material import FnMaterial
 from mmd_tools import bpyutils
+from mmd_tools.utils import saferelpath
 import mmd_tools.core.model as mmd_model
 
 
@@ -159,25 +160,32 @@ class __PmxExporter:
     def __copy_textures(self, output_dir, base_folder=''):
         tex_dir = output_dir
         tex_dir_fallback = os.path.join(tex_dir, 'textures')
+        tex_dir_preference = bpyutils.addon_preferences('base_texture_folder', '')
         for texture in self.__model.textures:
             path = texture.path
+            tex_dir = output_dir  # restart to the default directory at each loop
+            if not os.path.isfile(path):
+                logging.warning('*** skipping texture file which does not exist: %s', path)
+                continue
             dst_name = os.path.basename(path)
             if base_folder != '':
-                dst_name = os.path.relpath(path, base_folder)
+                dst_name = saferelpath(path, base_folder, strategy='outside')
                 if dst_name.startswith('..'):
-                    logging.warning('The texture %s is not inside the base texture folder', path)
-                    # Fall back to basename and textures folder
-                    dst_name = os.path.basename(path)
-                    tex_dir = tex_dir_fallback
-                else:
-                    tex_dir = output_dir
+                    # Check if the texture comes from the preferred folder
+                    if tex_dir_preference:
+                        dst_name = saferelpath(path, tex_dir_preference, strategy='outside')
+                    if dst_name.startswith('..'):
+                        # If the code reaches here the texture is somewhere else
+                        logging.warning('The texture %s is not inside the base texture folder', path)
+                        # Fall back to basename and textures folder
+                        dst_name = os.path.basename(path)
+                        tex_dir = tex_dir_fallback
             else:
                 tex_dir = tex_dir_fallback
             dest_path = os.path.join(tex_dir, dst_name)
             os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-            if not os.path.isfile(path):
-                logging.warning('*** skipping texture file which does not exist: %s', path)
-            elif path != dest_path:  # Only copy if the paths are different                        
+
+            if path != dest_path:  # Only copy if the paths are different                        
                 shutil.copyfile(path, dest_path)
                 logging.info('Copy file %s --> %s', path, dest_path)
             texture.path = dest_path
@@ -260,10 +268,10 @@ class __PmxExporter:
                 if p_bone.is_mmd_shadow_bone:
                     continue
                 bone = data.edit_bones[p_bone.name]
-                pmx_bone = pmx.Bone()
-                pmx_bone.name = p_bone.mmd_bone.name_j or bone.name
-
                 mmd_bone = p_bone.mmd_bone
+                pmx_bone = pmx.Bone()
+                pmx_bone.name = mmd_bone.name_j or bone.name
+
                 pmx_bone.hasAdditionalRotate = mmd_bone.has_additional_rotation
                 pmx_bone.hasAdditionalLocation = mmd_bone.has_additional_location
                 pmx_bone.additionalTransform = [None, mmd_bone.additional_transform_influence]
@@ -272,21 +280,21 @@ class __PmxExporter:
                     if fnBone:
                         pmx_bone.additionalTransform[0] = fnBone.pose_bone
 
-                pmx_bone.name_e = p_bone.mmd_bone.name_e or ''
+                pmx_bone.name_e = mmd_bone.name_e or ''
                 pmx_bone.location = world_mat * mathutils.Vector(bone.head) * self.__scale * self.TO_PMX_MATRIX
                 pmx_bone.parent = bone.parent
-                pmx_bone.transform_order = mmd_bone.transform_order
                 pmx_bone.visible = mmd_bone.is_visible
                 pmx_bone.isControllable = mmd_bone.is_controllable
                 pmx_bone.isMovable = not all(p_bone.lock_location)
                 pmx_bone.isRotatable = not all(p_bone.lock_rotation)
+                pmx_bone.transform_order = mmd_bone.transform_order
                 pmx_bone.transAfterPhis = mmd_bone.transform_after_dynamics
                 pmx_bones.append(pmx_bone)
                 self.__bone_name_table.append(p_bone.name)
                 boneMap[bone] = pmx_bone
                 r[bone.name] = len(pmx_bones) - 1
 
-                if bone.use_connect and arm.pose.bones[bone.parent.name].mmd_bone.is_tip:
+                if bone.use_connect and p_bone.parent.mmd_bone.is_tip:
                     logging.debug(' * fix location of bone %s, parent %s is tip', bone.name, bone.parent.name)
                     pmx_bone.location = boneMap[bone.parent].location
 
@@ -297,7 +305,7 @@ class __PmxExporter:
                         pmx_bone.displayConnection = child
                         break
                 if not pmx_bone.displayConnection:
-                    if p_bone.mmd_bone.is_tip:
+                    if mmd_bone.is_tip:
                         pmx_bone.displayConnection = -1
                     else:
                         tail_loc = world_mat * mathutils.Vector(bone.tail) * self.__scale * self.TO_PMX_MATRIX
@@ -408,16 +416,17 @@ class __PmxExporter:
                     else:
                         ik_bone_index = bone_map[c.subtarget]
 
-                    ik_target_bone = self.__get_connected_child_bone(bone)
+                    ik_target_bone = self.__get_ik_target_bone(bone)
                     pmx_ik_bone = pmx_bones[ik_bone_index]
+                    logging.debug('  - IK bone: %s, IK Target: %s', pmx_ik_bone.name, ik_target_bone.name)
                     pmx_ik_bone.isIK = True
                     pmx_ik_bone.loopCount = c.iterations
                     pmx_ik_bone.rotationConstraint = bone.mmd_bone.ik_rotation_constraint
                     pmx_ik_bone.target = bone_map[ik_target_bone.name]
                     pmx_ik_bone.ik_links = self.__exportIKLinks(bone, pmx_bones, bone_map, [], c.chain_count)
 
-    def __get_connected_child_bone(self, target_bone):
-        """ Get a connected child bone.
+    def __get_ik_target_bone(self, target_bone):
+        """ Get mmd ik target bone.
 
          Args:
              target_bone: A blender PoseBone
@@ -426,11 +435,18 @@ class __PmxExporter:
              A bpy.types.PoseBone object which is the closest bone from the tail position of target_bone.
              Return None if target_bone has no child bones.
         """
+        valid_children = [c for c in target_bone.children if not c.is_mmd_shadow_bone]
+
+        # search 'mmd_ik_target_override' first
+        for c in valid_children:
+            ik_target_override = c.constraints.get('mmd_ik_target_override', None)
+            if ik_target_override and ik_target_override.subtarget == target_bone.name:
+                logging.debug('  (use "mmd_ik_target_override")')
+                return c
+
         r = None
         min_length = None
-        for c in target_bone.children:
-            if c.is_mmd_shadow_bone:
-                continue
+        for c in valid_children:
             if c.bone.use_connect:
                 return c
             length = (c.head - target_bone.tail).length
@@ -916,12 +932,14 @@ class __PmxExporter:
 
         base_vertices = {}
         for v in base_mesh.vertices:
+            # Check that the vertex is in the vg_edge_scale
+            export_edge_scale = vg_edge_scale and vg_edge_scale.index in [x.group for x in v.groups]
             base_vertices[v.index] = [_Vertex(
                 v.co,
                 [(x.group, x.weight) for x in v.groups if x.weight > 0 and x.group in vertex_group_names],
                 {},
                 v.index if has_uv_morphs else None,
-                vg_edge_scale.weight(v.index) if vg_edge_scale else 1,
+                vg_edge_scale.weight(v.index) if export_edge_scale else 1,
                 )]
 
         # calculate offsets
