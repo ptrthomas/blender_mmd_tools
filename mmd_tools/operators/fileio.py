@@ -268,6 +268,16 @@ class ExportPmx(Operator, ExportHelper):
                      'E.g. blush meshes'),
         default=False,
         )
+    sort_vertices = bpy.props.EnumProperty(
+        name='Sort Vertices',
+        description='Choose the method to sort vertices',
+        items=[
+            ('NONE', 'None', 'No sorting', 0),
+            ('BLENDER', 'Blender', 'Use blender\'s internal vertex order', 1),
+            ('CUSTOM', 'Custom', 'Use custom vertex weight of vertex group "mmd_vertex_order"', 2),
+            ],
+        default='NONE',
+        )
 
     log_level = bpy.props.EnumProperty(
         name='Log level',
@@ -304,17 +314,12 @@ class ExportPmx(Operator, ExportHelper):
             self.report({ 'WARNING' }, "Active editing morphs were cleared")
             # return { 'CANCELLED' }
         rig = mmd_model.Model(root)
+        arm = rig.armature()
+        orig_pose_position = None
+        if arm: # use 'REST' pose before exporting
+            orig_pose_position = arm.data.pose_position
+            arm.data.pose_position = 'REST'
         rig.clean()
-        # Clear the pose before exporting
-        if rig.armature():
-            prev_show = root.mmd_root.show_armature
-            root.mmd_root.show_armature = True
-            selectAObject(rig.armature())
-            bpy.ops.object.mode_set(mode='POSE')
-            bpy.ops.pose.select_all(action='SELECT')
-            bpy.ops.pose.transforms_clear()
-            bpy.ops.object.mode_set(mode='OBJECT')
-            root.mmd_root.show_armature = prev_show
         try:
             pmx_exporter.export(
                 filepath=self.filepath,
@@ -326,12 +331,15 @@ class ExportPmx(Operator, ExportHelper):
                 joints=rig.joints(),
                 copy_textures=self.copy_textures,
                 sort_materials=self.sort_materials,
+                sort_vertices=self.sort_vertices,
                 )
         except Exception as e:
             err_msg = traceback.format_exc()
             logging.error(err_msg)
             self.report({'ERROR'}, err_msg)
         finally:
+            if orig_pose_position:
+                arm.data.pose_position = orig_pose_position
             if self.save_log:
                 logger.removeHandler(handler)
 
@@ -343,3 +351,34 @@ class ExportPmx(Operator, ExportHelper):
         wm = context.window_manager
         wm.fileselect_add(self)
         return {'RUNNING_MODAL'}
+
+class ExportVmd(Operator, ExportHelper):
+    bl_idname = 'mmd_tools.export_vmd'
+    bl_label = 'Export VMD file (.vmd)'
+    bl_description = '(WIP)'
+    bl_options = {'PRESET'}
+
+    filename_ext = '.vmd'
+    filter_glob = bpy.props.StringProperty(default='*.vmd', options={'HIDDEN'})
+
+
+    @classmethod
+    def poll(cls, context):
+        return False
+
+    def execute(self, context):
+
+        try:
+            pass #TODO
+        except Exception as e:
+            err_msg = traceback.format_exc()
+            logging.error(err_msg)
+            self.report({'ERROR'}, err_msg)
+
+        return {'FINISHED'}
+
+    def invoke(self, context, event):
+        wm = context.window_manager
+        wm.fileselect_add(self)
+        return {'RUNNING_MODAL'}
+
