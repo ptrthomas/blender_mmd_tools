@@ -9,13 +9,26 @@ import mmd_tools.core.camera as mmd_camera
 import mmd_tools.core.lamp as mmd_lamp
 import mmd_tools.core.vmd as vmd
 from mmd_tools import utils
+from mmd_tools import translations
+
 
 class RenamedBoneMapper:
-    def __init__(self, armObj):
+    def __init__(self, armObj=None, rename_LR_bones=True, use_underscore=False, translate_to_english=False):
+        self.__pose_bones = armObj.pose.bones if armObj else None
+        self.__rename_LR_bones = rename_LR_bones
+        self.__use_underscore = use_underscore
+        self.__translate_to_english = translate_to_english
+
+    def init(self, armObj):
         self.__pose_bones = armObj.pose.bones
+        return self
 
     def get(self, bone_name, default=None):
-        bl_bone_name = utils.convertNameToLR(bone_name)
+        bl_bone_name = bone_name
+        if self.__rename_LR_bones:
+            bl_bone_name = utils.convertNameToLR(bl_bone_name, self.__use_underscore)
+        if self.__translate_to_english:
+            bl_bone_name = translations.translateFromJp(bl_bone_name)
         return self.__pose_bones.get(bl_bone_name, default)
 
 
@@ -220,11 +233,14 @@ class VMDImporter:
         cameraAnim.sort(key=lambda x:x.frame_number)
         for keyFrame in cameraAnim:
             mmdCamera.mmd_camera.angle = math.radians(keyFrame.angle)
+            mmdCamera.mmd_camera.is_perspective = keyFrame.persp
             cameraObj.location[1] = keyFrame.distance * self.__scale
             mmdCamera.location = mathutils.Vector((keyFrame.location[0], keyFrame.location[2], keyFrame.location[1])) * self.__scale
             mmdCamera.rotation_euler = mathutils.Vector((keyFrame.rotation[0], keyFrame.rotation[2], keyFrame.rotation[1]))
             mmdCamera.keyframe_insert(data_path='mmd_camera.angle',
-                                           frame=keyFrame.frame_number+self.__frame_margin)
+                                      frame=keyFrame.frame_number+self.__frame_margin)
+            mmdCamera.keyframe_insert(data_path='mmd_camera.is_perspective',
+                                      frame=keyFrame.frame_number+self.__frame_margin)
             cameraObj.keyframe_insert(data_path='location', index=1,
                                       frame=keyFrame.frame_number+self.__frame_margin)
             mmdCamera.keyframe_insert(data_path='location',
@@ -232,7 +248,14 @@ class VMDImporter:
             mmdCamera.keyframe_insert(data_path='rotation_euler',
                                       frame=keyFrame.frame_number+self.__frame_margin)
 
-        paths = ['rotation_euler', 'mmd_camera.angle', 'location']
+        paths = ['rotation_euler', 'location', 'mmd_camera.angle']
+        for fcurve in cameraObj.animation_data.action.fcurves:
+            if fcurve.data_path == 'location' and fcurve.array_index == 1:
+                frames = list(fcurve.keyframe_points)
+                frames.sort(key=lambda kp:kp.co.x)
+                for i in range(1, len(cameraAnim)):
+                    interp = cameraAnim[i].interp
+                    self.__setInterpolation([interp[16 + j] for j in [0, 2, 1, 3]], frames[i - 1], frames[i])
         for fcurve in act.fcurves:
             if fcurve.data_path in paths:
                 if fcurve.data_path =='location':

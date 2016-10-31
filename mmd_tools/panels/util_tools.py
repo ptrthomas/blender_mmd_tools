@@ -14,7 +14,10 @@ class UL_Materials(UIList):
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
         if self.layout_type in {'DEFAULT'}:    
             if item:        
-                layout.label(text=item.name, translate=False, icon='MATERIAL')
+                row = layout.row(align=True)
+                item_prop = getattr(item, 'mmd_material')
+                row.prop(item_prop, 'name_j', text='', emboss=False, icon='MATERIAL')
+                row.prop(item_prop, 'name_e', text='', emboss=True)
             else:
                 layout.label(text='UNSET', translate=False, icon='ERROR')
         elif self.layout_type in {'COMPACT'}:
@@ -69,16 +72,26 @@ class UL_ModelMeshes(UIList):
         flt_flags = [~self.bitflag_filter_item] * len(objects)
         flt_neworder = list(range(len(objects)))
         active_root = Model.findRoot(context.active_object)
-        rig = Model(active_root)
+        #rig = Model(active_root)
+        #for i, obj in enumerate(objects):
+        #    if (obj.type == 'MESH' and obj.mmd_type == 'NONE'
+        #            and Model.findRoot(obj) == active_root):
+        #        flt_flags[i] = self.bitflag_filter_item
+        #        new_index = rig.getMeshIndex(obj.name)
+        #        flt_neworder[i] = new_index
+        name_dict = {}
         for i, obj in enumerate(objects):
             if (obj.type == 'MESH' and obj.mmd_type == 'NONE'
                     and Model.findRoot(obj) == active_root):
-                flt_flags[i] = self.bitflag_filter_item 
-                new_index = rig.getMeshIndex(obj.name)
-                flt_neworder[i] = new_index
+                flt_flags[i] = self.bitflag_filter_item
+                name_dict[obj.name] = i
+
+        for new_index, name in enumerate(sorted(name_dict.keys())):
+            i = name_dict[name]
+            flt_neworder[i] = new_index
 
         return flt_flags, flt_neworder
-                
+
 
 class MMDMeshSorter(_PanelBase, Panel):
     bl_idname = 'OBJECT_PT_mmd_tools_meshes_sorter'

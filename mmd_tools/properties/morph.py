@@ -37,6 +37,12 @@ def _set_name(prop, value):
                     shape_key.name = value
                     value = shape_key.name
 
+        if morph_type != 'group_morphs':
+            for m in mmd_root.group_morphs:
+                for d in m.data:
+                    if d.name == prop_name and d.morph_type == morph_type:
+                        d.name = value
+
         for item in mmd_root.display_item_frames[u'表情'].items:
             if item.name == prop_name and item.morph_type == morph_type:
                 item.name = value
@@ -60,7 +66,7 @@ class _MorphBase:
         name='Category',
         description='Select category',
         items = [
-            ('SYSTEM', 'System', '', 0),
+            ('SYSTEM', 'Hidden', '', 0),
             ('EYEBROW', 'Eye Brow', '', 1),
             ('EYE', 'Eye', '', 2),
             ('MOUTH', 'Mouth', '', 3),
@@ -216,8 +222,8 @@ class MaterialMorphData(PropertyGroup):
         )
 
     shininess = FloatProperty(
-        name='Shininess',
-        description='Shininess',
+        name='Reflect',
+        description='Reflect',
         soft_min=0,
         soft_max=500,
         step=100.0,

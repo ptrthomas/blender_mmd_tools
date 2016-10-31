@@ -12,16 +12,73 @@ from mmd_tools.core.material import FnMaterial
 
 PREFIX_PATT = r'(?P<prefix>[0-9A-Z]{3}_)(?P<name>.*)'
 
+class CleanShapeKeys(Operator):
+    bl_idname = 'mmd_tools.clean_shape_keys'
+    bl_label = 'Clean Shape Keys'
+    bl_description = 'Remove unused shape keys of selected mesh objects'
+    bl_options = {'PRESET'}
+
+    @classmethod
+    def poll(cls, context):
+        return len(context.selected_objects) > 0
+
+    @staticmethod
+    def __has_offsets(key_block):
+        if key_block.relative_key == key_block:
+            return True # Basis
+        for v0, v1 in zip(key_block.relative_key.data, key_block.data):
+            if v0.co != v1.co:
+                return True
+        return False
+
+    def __shape_key_clean(self, context, obj, key_blocks):
+        for kb in key_blocks:
+            if not self.__has_offsets(kb):
+                obj.shape_key_remove(kb)
+
+    def __shape_key_clean_old(self, context, obj, key_blocks):
+        context.scene.objects.active = obj
+        for i in reversed(range(len(key_blocks))):
+            kb = key_blocks[i]
+            if not self.__has_offsets(kb):
+                obj.active_shape_key_index = i
+                bpy.ops.object.shape_key_remove()
+
+    __do_shape_key_clean = __shape_key_clean_old if bpy.app.version < (2, 75, 0) else __shape_key_clean
+
+    def execute(self, context):
+        for ob in context.selected_objects:
+            if ob.type != 'MESH' or ob.data.shape_keys is None:
+                continue
+            if not ob.data.shape_keys.use_relative:
+                continue # not be considered yet
+            key_blocks = ob.data.shape_keys.key_blocks
+            counts = len(key_blocks)
+            self.__do_shape_key_clean(context, ob, key_blocks)
+            counts -= len(key_blocks)
+            self.report({ 'INFO' }, 'Removed %d shape keys of object "%s"'%(counts, ob.name))
+        return {'FINISHED'}
+
 class SeparateByMaterials(Operator):
     bl_idname = 'mmd_tools.separate_by_materials'
     bl_label = 'Separate by materials'
     bl_description = 'Separate by materials'
     bl_options = {'PRESET'}
 
+    clean_shape_keys = bpy.props.BoolProperty(
+        name='Clean Shape Keys',
+        description='Remove unused shape keys of separated objects',
+        default=True,
+        )
+
     @classmethod
     def poll(cls, context):
         obj = context.active_object
         return obj and obj.type == 'MESH'
+
+    def invoke(self, context, event):
+        vm = context.window_manager
+        return vm.invoke_props_dialog(self)
 
     def execute(self, context):
         obj = context.active_object
@@ -36,6 +93,8 @@ class SeparateByMaterials(Operator):
             rig = mmd_model.Model(root)
             mat_names = [mat.name for mat in rig.materials()]
         utils.separateByMaterials(obj)
+        if self.clean_shape_keys:
+            bpy.ops.mmd_tools.clean_shape_keys()
         if root:
             rig = mmd_model.Model(root)
             # The material morphs store the name of the mesh, not of the object.
@@ -91,11 +150,16 @@ class JoinMeshes(Operator):
         material_names = [mat.name for mat in rig.materials()]
         # Join selected meshes
         bpy.ops.object.select_all(action='DESELECT')
+        act_layer = context.scene.active_layer
         for mesh in meshes_list:
+            mesh.layers[act_layer] = True
+            mesh.hide_select = False
             mesh.hide = False
             mesh.select = True
         bpy.context.scene.objects.active = active_mesh
         bpy.ops.object.join()
+        # Restore shape key order
+        FnMorph.fixShapeKeyOrder(active_mesh, [i.name for i in root.mmd_root.vertex_morphs])
         # Restore the material order
         FnMaterial.fixMaterialOrder(rig.firstMesh(), material_names)
         if len(root.mmd_root.material_morphs) > 0:
@@ -220,7 +284,7 @@ class MoveModelMeshDown(Operator):
 class ChangeMMDIKLoopFactor(Operator):
     bl_idname = 'mmd_tools.change_mmd_ik_loop_factor'
     bl_label = 'Change MMD IK Loop Factor'
-    bl_description = 'Change scaling factor of MMD IK loop and update iteration of IK constraints on active armature'
+    bl_description = "Multiplier for all bones' IK iterations in Blender"
     bl_options = {'PRESET'}
 
     mmd_ik_loop_factor = bpy.props.IntProperty(
