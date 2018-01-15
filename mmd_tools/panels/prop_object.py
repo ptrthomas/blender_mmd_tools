@@ -18,15 +18,7 @@ class MMDModelObjectPanel(_PanelBase, Panel):
 
     @classmethod
     def poll(cls, context):
-        obj = context.active_object
-        if obj is None:
-            return False
-
-        root = mmd_model.Model.findRoot(obj)
-        if root is None:
-            return False
-
-        return True
+        return mmd_model.Model.findRoot(context.active_object)
 
     def draw(self, context):
         layout = self.layout
@@ -37,7 +29,6 @@ class MMDModelObjectPanel(_PanelBase, Panel):
         c = layout.column()
         c.prop(root.mmd_root, 'name')
         c.prop(root.mmd_root, 'name_e')
-        c.prop(root.mmd_root, 'scale')
         c = layout.column()
         c.prop_search(root.mmd_root, 'comment_text', search_data=bpy.data, search_property='texts')
         c.prop_search(root.mmd_root, 'comment_e_text', search_data=bpy.data, search_property='texts')

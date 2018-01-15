@@ -24,18 +24,25 @@ def _set_name(prop, value):
     morph_type = '%s_morphs'%prop.bl_rna.identifier[:-5].lower()
     #assert(prop.bl_rna.identifier.endswith('Morph'))
     #print('_set_name:', prop, value, morph_type)
-    value = utils.uniqueName(value, getattr(mmd_root, morph_type))
     prop_name = prop.get('name', None)
-    if prop_name and prop_name != value:
+    if prop_name == value:
+        return
+
+    used_names = set(x.name for x in getattr(mmd_root, morph_type))
+    value = utils.uniqueName(value, used_names)
+    if prop_name is not None:
         if morph_type == 'vertex_morphs':
+            kb_list = {}
             for mesh in FnModel(prop.id_data).meshes():
                 shape_keys = mesh.data.shape_keys
-                if shape_keys is None:
-                    continue
-                shape_key = shape_keys.key_blocks.get(prop_name, None)
-                if shape_key:
-                    shape_key.name = value
-                    value = shape_key.name
+                if shape_keys:
+                    for kb in shape_keys.key_blocks:
+                        kb_list.setdefault(kb.name, []).append(kb)
+
+            if prop_name in kb_list:
+                value = utils.uniqueName(value, used_names|kb_list.keys())
+                for kb in kb_list[prop_name]:
+                    kb.name = value
 
         if 1:#morph_type != 'group_morphs':
             for m in mmd_root.group_morphs:
@@ -43,7 +50,8 @@ def _set_name(prop, value):
                     if d.name == prop_name and d.morph_type == morph_type:
                         d.name = value
 
-        for item in mmd_root.display_item_frames[u'表情'].items:
+        frame_facial = mmd_root.display_item_frames.get(u'表情')
+        for item in getattr(frame_facial, 'items', []):
             if item.name == prop_name and item.morph_type == morph_type:
                 item.name = value
                 break
@@ -98,7 +106,7 @@ def _set_bone(prop, value):
     pose_bone = arm.pose.bones[value]
     fnBone = FnBone(pose_bone)
     prop['bone_id'] = fnBone.bone_id
-    
+
 class BoneMorphData(PropertyGroup):
     """
     """
@@ -136,7 +144,7 @@ class BoneMorph(_MorphBase, PropertyGroup):
         name='Morph Data',
         type=BoneMorphData,
         )
-    active_bone_data = IntProperty(
+    active_data = IntProperty(
         name='Active Bone Data',
         min=0,
         default=0,
@@ -158,15 +166,17 @@ def _set_material(prop, value):
     mat = bpy.data.materials[value]
     fnMat = FnMaterial(mat)
     prop['material_id'] = fnMat.material_id
-    
+
 def _set_related_mesh(prop, value):
     rig = FnModel(prop.id_data)
     if rig.findMesh(value):
         prop['related_mesh'] = value
-        
+    else:
+        prop['related_mesh'] = ''
+
 def _get_related_mesh(prop):
     return prop.get('related_mesh', '')
-    
+
 class MaterialMorphData(PropertyGroup):
     """
     """
@@ -306,7 +316,7 @@ class MaterialMorph(_MorphBase, PropertyGroup):
         name='Morph Data',
         type=MaterialMorphData,
         )
-    active_material_data = IntProperty(
+    active_data = IntProperty(
         name='Active Material Data',
         min=0,
         default=0,
@@ -346,7 +356,7 @@ class UVMorph(_MorphBase, PropertyGroup):
         name='Morph Data',
         type=UVMorphOffset,
         )
-    active_uv_data = IntProperty(
+    active_data = IntProperty(
         name='Active UV Data',
         min=0,
         default=0,
@@ -384,7 +394,7 @@ class GroupMorph(_MorphBase, PropertyGroup):
         name='Morph Data',
         type=GroupMorphOffset,
         )
-    active_group_data = IntProperty(
+    active_data = IntProperty(
         name='Active Group Data',
         min=0,
         default=0,

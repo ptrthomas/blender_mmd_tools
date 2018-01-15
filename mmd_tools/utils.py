@@ -34,7 +34,6 @@ def setParentToBone(obj, parent, bone_name):
 
 def selectSingleBone(context, armature, bone_name, reset_pose=False):
     import bpy
-    from mathutils import Vector, Quaternion
     try:
         bpy.ops.object.mode_set(mode='OBJECT')
     except:
@@ -46,13 +45,8 @@ def selectSingleBone(context, armature, bone_name, reset_pose=False):
     armature.layers[context.scene.active_layer] = True
     context.scene.objects.active = armature
     if reset_pose:
-        def_loc = Vector((0,0,0))
-        def_rot = Quaternion((1,0,0,0))
-        def_scale = Vector((1,1,1))
         for p_bone in armature.pose.bones:
-            p_bone.location = def_loc
-            p_bone.rotation_quaternion = def_rot
-            p_bone.scale = def_scale
+            p_bone.matrix_basis.identity()
     bpy.ops.object.mode_set(mode='POSE')
     armature_bones = armature.data.bones
     for i in armature_bones:
@@ -93,6 +87,7 @@ def mergeVertexGroup(meshObj, src_vertex_group_name, dest_vertex_group_name):
 
 def separateByMaterials(meshObj):
     import bpy
+    matrix_parent_inverse = meshObj.matrix_parent_inverse.copy()
     prev_parent = meshObj.parent
     dummy_parent = bpy.data.objects.new(name='tmp', object_data=None)
     meshObj.parent = dummy_parent
@@ -108,15 +103,16 @@ def separateByMaterials(meshObj):
     for i in dummy_parent.children:
         mesh = i.data
         if len(mesh.polygons) > 0:
-            mat_index = mesh.polygons[0].material_index
-            mat = mesh.materials[mat_index]
-            for k in mesh.materials:
-                mesh.materials.pop(index=0, update_data=True)
-            mesh.materials.append(mat)
-            for po in mesh.polygons:
-                po.material_index = 0
-            i.name = mat.name
+            materials = mesh.materials
+            if len(materials) > 1:
+                mat_index = mesh.polygons[0].material_index
+                for x in reversed(range(len(materials))):
+                    if x != mat_index:
+                        materials.pop(index=x, update_data=True)
+            i.name = getattr(materials[0], 'name', 'None') if len(materials) else 'None'
             i.parent = prev_parent
+            i.matrix_parent_inverse = matrix_parent_inverse
+    bpy.data.objects.remove(dummy_parent)
 
 def clearUnusedMeshes():
     import bpy
@@ -127,7 +123,6 @@ def clearUnusedMeshes():
 
     for mesh in meshes_to_delete:
         bpy.data.meshes.remove(mesh)
-    
 
 
 ## Boneのカスタムプロパティにname_jが存在する場合、name_jの値を
@@ -152,26 +147,26 @@ def uniqueName(name, used_names):
         count += 1
     return new_name
 
-def int2base(x, base):
+def int2base(x, base, width=0):
     """
     Method to convert an int to a base
     Source: http://stackoverflow.com/questions/2267362
     """
     import string
     digs = string.digits + string.ascii_uppercase
-    if x < 0: sign = -1
-    elif x == 0: return digs[0]
-    else: 
-        sign = 1
-        x *= sign
-        digits = []
+    assert(2 <= base <= len(digs))
+    digits, negtive = '', False
+    if x <= 0:
+        if x == 0:
+            return '0'*max(1, width)
+        x, negtive, width = -x, True, width-1
     while x:
-        digits.append(digs[x % base])
-        x = int(x / base)
-    if sign < 0:
-        digits.append('-')
-    digits.reverse()
-    return ''.join(digits)
+        digits = digs[x % base] + digits
+        x //= base
+    digits = '0'*(width-len(digits)) + digits
+    if negtive:
+        digits = '-' + digits
+    return digits
 
 def saferelpath(path, start, strategy='inside'):
     """
@@ -200,3 +195,73 @@ def saferelpath(path, start, strategy='inside'):
     else:
         result = os.path.relpath(path, start)
     return result
+
+
+class ItemOp:
+    @staticmethod
+    def get_by_index(items, index):
+        if 0 <= index < len(items):
+            return items[index]
+        return None
+
+    @staticmethod
+    def resize(items, length):
+        count = length - len(items)
+        if count > 0:
+            for i in range(count):
+                items.add()
+        elif count < 0:
+            for i in range(-count):
+                items.remove(length)
+
+    @staticmethod
+    def add_after(items, index):
+        index_end = len(items)
+        index = max(0, min(index_end, index+1))
+        items.add()
+        items.move(index_end, index)
+        return items[index], index
+
+class ItemMoveOp:
+    import bpy
+    type = bpy.props.EnumProperty(
+        name='Type',
+        description='Move type',
+        items = [
+            ('UP', 'Up', '', 0),
+            ('DOWN', 'Down', '', 1),
+            ('TOP', 'Top', '', 2),
+            ('BOTTOM', 'Bottom', '', 3),
+            ],
+        default='UP',
+        )
+
+    @staticmethod
+    def move(items, index, move_type, index_min=0, index_max=None):
+        if index_max is None:
+            index_max = len(items)-1
+        else:
+            index_max = min(index_max, len(items)-1)
+        index_min = min(index_min, index_max)
+
+        if index < index_min:
+            items.move(index, index_min)
+            return index_min
+        elif index > index_max:
+            items.move(index, index_max)
+            return index_max
+
+        index_new = index
+        if move_type == 'UP':
+            index_new = max(index_min, index-1)
+        elif move_type == 'DOWN':
+            index_new = min(index+1, index_max)
+        elif move_type == 'TOP':
+            index_new = index_min
+        elif move_type == 'BOTTOM':
+            index_new = index_max
+
+        if index_new != index:
+            items.move(index, index_new)
+        return index_new
+

@@ -17,6 +17,12 @@ def _updateCollisionGroup(prop, context):
     else:
         obj.material_slots[0].material = rigid_body.RigidBodyMaterial.getMaterial(prop.collision_group_number)
 
+def _updateType(prop, context):
+    obj = prop.id_data
+    rb = obj.rigid_body
+    if rb:
+        rb.kinematic = (int(prop.type) == rigid_body.MODE_STATIC)
+
 def _updateShape(prop, context):
     obj = prop.id_data
 
@@ -175,6 +181,7 @@ class MMDRigidBody(PropertyGroup):
             (str(rigid_body.MODE_DYNAMIC_BONE), 'Physics + Bone',
                 "Bone determined by combination of parent and attached rigid body", 3),
             ],
+        update=_updateType,
         )
 
     shape = EnumProperty(
@@ -207,6 +214,24 @@ class MMDRigidBody(PropertyGroup):
         set=_set_size,
         )
 
+
+def _updateSpringLinear(prop, context):
+    obj = prop.id_data
+    rbc = obj.rigid_body_constraint
+    if rbc:
+        rbc.spring_stiffness_x = prop.spring_linear[0]
+        rbc.spring_stiffness_y = prop.spring_linear[1]
+        rbc.spring_stiffness_z = prop.spring_linear[2]
+
+def _updateSpringAngular(prop, context):
+    obj = prop.id_data
+    rbc = obj.rigid_body_constraint
+    if rbc and hasattr(rbc, 'use_spring_ang_x'):
+        rbc.spring_stiffness_ang_x = prop.spring_angular[0]
+        rbc.spring_stiffness_ang_y = prop.spring_angular[1]
+        rbc.spring_stiffness_ang_z = prop.spring_angular[2]
+
+
 class MMDJoint(PropertyGroup):
     name_j = StringProperty(
         name='Name',
@@ -227,6 +252,7 @@ class MMDJoint(PropertyGroup):
         size=3,
         min=0,
         step=0.1,
+        update=_updateSpringLinear,
         )
 
     spring_angular = FloatVectorProperty(
@@ -236,4 +262,5 @@ class MMDJoint(PropertyGroup):
         size=3,
         min=0,
         step=0.1,
+        update=_updateSpringAngular,
         )

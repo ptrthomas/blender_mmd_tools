@@ -157,7 +157,7 @@ class Material:
         self.shininess = fs.readFloat()
         self.specular = fs.readVector(3)
         self.ambient = fs.readVector(3)
-        self.toon_index = fs.readByte()
+        self.toon_index = fs.readSignedByte()
         self.edge_flag = fs.readByte()
         self.vertex_count = fs.readUnsignedInt()
         tex_path = fs.readStr(20)
@@ -189,7 +189,10 @@ class Bone:
         if self.tail_bone == 0xffff:
             self.tail_bone = -1
         self.type = fs.readByte()
-        self.ik_bone = fs.readUnsignedShort()
+        if self.type == 9:
+            self.ik_bone = fs.readShort()
+        else:
+            self.ik_bone = fs.readUnsignedShort()
         self.position = fs.readVector(3)
 
 class IK:
@@ -532,6 +535,7 @@ class Model:
         self.toon_textures = []
         for i in range(10):
             t = fs.readStr(100)
+            t = t.replace('\\', os.path.sep)
             self.toon_textures.append(t)
             logging.info('Toon Texture %d: %s', i, t)
         logging.info('----- Loaded %d textures', len(self.toon_textures))
@@ -575,8 +579,8 @@ class Model:
             joint.load(fs)
             self.joints.append(joint)
             logging.info('Joint %d: %s', i, joint.name)
-            logging.debug('  Rigid A: %s (index: %d)', self.rigid_bodies[joint.src_rigid].name, joint.src_rigid)
-            logging.debug('  Rigid B: %s (index: %d)', self.rigid_bodies[joint.dest_rigid].name, joint.dest_rigid)
+            logging.debug('  Rigid A: %s', joint.src_rigid)
+            logging.debug('  Rigid B: %s', joint.dest_rigid)
             logging.debug('  Location: (%f, %f, %f)', *joint.location)
             logging.debug('  Rotation: (%f, %f, %f)', *joint.rotation)
             logging.debug('  Location Limit: (%f, %f, %f) - (%f, %f, %f)', *(joint.minimum_location + joint.maximum_location))
@@ -598,7 +602,11 @@ def load(path):
         logging.info('')
 
         model = Model()
-        model.load(fs)
+        try:
+            model.load(fs)
+        except struct.error as e:
+            logging.error(' * Corrupted file: %s', e)
+            #raise
 
         logging.info(' Finish loading.')
         logging.info('----------------------------------------')

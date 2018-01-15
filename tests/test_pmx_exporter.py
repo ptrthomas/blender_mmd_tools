@@ -45,6 +45,9 @@ class TestPmxExporter(unittest.TestCase):
     # Utils
     #********************************************
 
+    def __axis_error(self, axis0, axis1):
+        return (Vector(axis0).normalized() - Vector(axis1).normalized()).length
+
     def __vector_error(self, vec0, vec1):
         return (Vector(vec0) - Vector(vec1)).length
 
@@ -128,9 +131,7 @@ class TestPmxExporter(unittest.TestCase):
         result_materials = result_model.materials
         self.assertEqual(len(source_materials), len(result_materials))
 
-        source_table = sorted(source_materials, key=lambda x: x.name)
-        result_table = sorted(result_materials, key=lambda x: x.name)
-        for mat0, mat1 in zip(source_table, result_table):
+        for mat0, mat1 in zip(source_materials, result_materials):
             msg = mat0.name
             self.assertEqual(mat0.name, mat1.name, msg)
             self.assertEqual(mat0.name_e or mat0.name, mat1.name_e, msg)
@@ -243,10 +244,14 @@ class TestPmxExporter(unittest.TestCase):
             self.assertEqual(bone0.transAfterPhis, bone1.transAfterPhis, msg)
             self.assertEqual(bone0.externalTransKey, bone1.externalTransKey, msg)
 
-            self.assertEqual(bone0.axis, bone1.axis, msg)
+            if bone0.axis and bone1.axis:
+                self.assertLess(self.__axis_error(bone0.axis, bone1.axis), 1e-6, msg)
+            else:
+                self.assertEqual(bone0.axis, bone1.axis, msg)
+
             if bone0.localCoordinate and bone1.localCoordinate:
-                self.assertEqual(bone0.localCoordinate.x_axis, bone1.localCoordinate.x_axis, msg)
-                self.assertEqual(bone0.localCoordinate.z_axis, bone1.localCoordinate.z_axis, msg)
+                self.assertLess(self.__axis_error(bone0.localCoordinate.x_axis, bone1.localCoordinate.x_axis), 1e-6, msg)
+                self.assertLess(self.__axis_error(bone0.localCoordinate.z_axis, bone1.localCoordinate.z_axis), 1e-6, msg)
             else:
                 self.assertEqual(bone0.localCoordinate, bone1.localCoordinate, msg)
 
@@ -318,9 +323,7 @@ class TestPmxExporter(unittest.TestCase):
         source_bones = source_model.bones
         result_bones = result_model.bones
 
-        source_table = sorted(source_rigids, key=lambda x: x.name)
-        result_table = sorted(result_rigids, key=lambda x: x.name)
-        for rigid0, rigid1 in zip(source_table, result_table):
+        for rigid0, rigid1 in zip(source_rigids, result_rigids):
             msg = rigid0.name
             self.assertEqual(rigid0.name, rigid1.name, msg)
             self.assertEqual(rigid0.name_e, rigid1.name_e, msg)
@@ -334,9 +337,9 @@ class TestPmxExporter(unittest.TestCase):
 
             self.assertEqual(rigid0.type, rigid1.type, msg)
             if rigid0.type == 0: # SHAPE_SPHERE
-                self.assertEqual(rigid0.size[0], rigid1.size[0], msg)
+                self.assertLess(abs(rigid0.size[0]-rigid1.size[0]), 1e-6, msg)
             elif rigid0.type == 1: # SHAPE_BOX
-                self.assertEqual(rigid0.size, rigid1.size, msg)
+                self.assertLess(self.__vector_error(rigid0.size, rigid1.size), 1e-6, msg)
             elif rigid0.type == 2: # SHAPE_CAPSULE
                 self.assertLess(self.__vector_error(rigid0.size[0:2], rigid1.size[0:2]), 1e-6, msg)
 
@@ -357,9 +360,7 @@ class TestPmxExporter(unittest.TestCase):
         result_joints = result_model.joints
         self.assertEqual(len(source_joints), len(result_joints))
 
-        source_table = sorted(source_joints, key=lambda x: x.name)
-        result_table = sorted(result_joints, key=lambda x: x.name)
-        for joint0, joint1 in zip(source_table, result_table):
+        for joint0, joint1 in zip(source_joints, result_joints):
             msg = joint0.name
             self.assertEqual(joint0.name, joint1.name, msg)
             self.assertEqual(joint0.name_e, joint1.name_e, msg)
@@ -615,7 +616,6 @@ class TestPmxExporter(unittest.TestCase):
                     types=import_types,
                     scale=1,
                     clean_model=False,
-                    renameBones=False,
                     )
                 bpy.context.scene.update()
             except Exception:
@@ -625,6 +625,7 @@ class TestPmxExporter(unittest.TestCase):
                     output_pmx = os.path.join(TESTS_DIR, 'output', '%d.pmx'%test_num)
                     bpy.ops.mmd_tools.export_pmx(
                         filepath=output_pmx,
+                        scale=1,
                         copy_textures=False,
                         sort_materials=False,
                         log_level='ERROR',

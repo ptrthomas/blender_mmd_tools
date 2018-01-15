@@ -57,28 +57,46 @@ class Model:
         self.__temporary_grp = None
 
     @staticmethod
-    def create(name, name_e='', scale=1):
+    def create(name, name_e='', scale=1, obj_name=None, armature=None, add_root_bone=False):
         scene = bpy.context.scene
+        if obj_name is None:
+            obj_name = name
 
-        root = bpy.data.objects.new(name=name, object_data=None)
+        root = bpy.data.objects.new(name=obj_name, object_data=None)
         root.mmd_type = 'ROOT'
         root.mmd_root.name = name
         root.mmd_root.name_e = name_e
-        root.mmd_root.scale = scale
-        #root.lock_location = [True, True, True]
-        #root.lock_rotation = [True, True, True]
-        root.lock_scale = [True, True, True]
+        root.empty_draw_size = scale / 0.2
+        scene.objects.link(root)
 
-        arm = bpy.data.armatures.new(name=name)
-        #arm.draw_type = 'STICK'
-        armObj = bpy.data.objects.new(name=name+'_arm', object_data=arm)
+        armObj = armature
+        if armObj:
+            m = armObj.matrix_world
+            armObj.parent_type = 'OBJECT'
+            armObj.parent = root
+            #armObj.matrix_world = m
+            root.matrix_world = m
+            armObj.matrix_local.identity()
+        else:
+            arm = bpy.data.armatures.new(name=obj_name)
+            #arm.draw_type = 'STICK'
+            armObj = bpy.data.objects.new(name=obj_name+'_arm', object_data=arm)
+            armObj.parent = root
+            scene.objects.link(armObj)
         armObj.lock_rotation = armObj.lock_location = armObj.lock_scale = [True, True, True]
         armObj.show_x_ray = True
-        armObj.parent = root
+        armObj.draw_type = 'WIRE'
 
-        scene.objects.link(root)
-        scene.objects.link(armObj)
+        if add_root_bone:
+            with bpyutils.edit_object(armObj) as data:
+                bone = data.edit_bones.new(name=u'全ての親')
+                bone.head = [0.0, 0.0, 0.0]
+                bone.tail = [0.0, 0.0, root.empty_draw_size]
+            armObj.pose.bones[bone.name].mmd_bone.name_j = u'全ての親'
+            armObj.pose.bones[bone.name].mmd_bone.name_e = 'Root'
 
+        scene.objects.active = root
+        root.select = True
         return Model(root)
 
     @classmethod
@@ -89,18 +107,35 @@ class Model:
             return cls.findRoot(obj.parent)
         return None
 
-    def initialDisplayFrames(self):
+    def initialDisplayFrames(self, reset=True):
         frames = self.__root.mmd_root.display_item_frames
-        if len(frames) > 0:
+        if reset and len(frames):
+            self.__root.mmd_root.active_display_item_frame = 0
             frames.clear()
-        frame_root = frames.add()
+
+        frame_root = frames.get('Root', None)
+        if frame_root is None:
+            frame_root = frames.add()
         frame_root.name = 'Root'
         frame_root.name_e = 'Root'
         frame_root.is_special = True
-        frame_facial = frames.add()
+
+        frame_facial = frames.get(u'表情', None)
+        if frame_facial is None:
+            frame_facial = frames.add()
         frame_facial.name = u'表情'
-        frame_facial.name_e = 'Exp'
+        frame_facial.name_e = 'Facial'
         frame_facial.is_special = True
+
+        arm = self.armature()
+        if arm and len(arm.data.bones) and len(frame_root.items) < 1:
+            item = frame_root.items.add()
+            item.type = 'BONE'
+            item.name = arm.data.bones[0].name
+
+        if not reset:
+            frames.move(frames.find('Root'), 0)
+            frames.move(frames.find(u'表情'), 1)
 
     def createRigidBodyPool(self, counts):
         if counts < 1:
@@ -113,9 +148,10 @@ class Model:
         obj.show_wire = True
         obj.show_transparent = True
         obj.hide_render = True
-        for attr_name in ('camera', 'diffuse', 'glossy', 'scatter', 'shadow', 'transmission'):
-            if hasattr(obj.cycles_visibility, attr_name):
-                setattr(obj.cycles_visibility, attr_name, False)
+        if hasattr(obj, 'cycles_visibility'):
+            for attr_name in ('camera', 'diffuse', 'glossy', 'scatter', 'shadow', 'transmission'):
+                if hasattr(obj.cycles_visibility, attr_name):
+                    setattr(obj.cycles_visibility, attr_name, False)
 
         if bpy.app.version < (2, 71, 0):
             obj.mmd_rigid.shape = 'BOX'
@@ -203,9 +239,11 @@ class Model:
         obj.mmd_type = 'JOINT'
         obj.rotation_mode = 'YXZ'
         obj.empty_draw_type = 'ARROWS'
-        obj.empty_draw_size = 0.5 * self.__root.mmd_root.scale
+        obj.empty_draw_size = 0.1 * self.__root.empty_draw_size
         obj.hide_render = True
 
+        if bpy.ops.rigidbody.world_add.poll():
+            bpy.ops.rigidbody.world_add()
         bpy.ops.rigidbody.constraint_add(type='GENERIC_SPRING')
         rbc = obj.rigid_body_constraint
         rbc.disable_collisions = False
@@ -218,6 +256,10 @@ class Model:
         rbc.use_spring_x = True
         rbc.use_spring_y = True
         rbc.use_spring_z = True
+        if hasattr(rbc, 'use_spring_ang_x'):
+            rbc.use_spring_ang_x = True
+            rbc.use_spring_ang_y = True
+            rbc.use_spring_ang_z = True
         if counts == 1:
             return [obj]
         return bpyutils.duplicateObject(obj, counts)
@@ -469,8 +511,12 @@ class Model:
         return material_list
 
     def renameBone(self, old_bone_name, new_bone_name):
+        if old_bone_name == new_bone_name:
+            return
         armature = self.armature()
         bone = armature.pose.bones[old_bone_name]
+        bone.name = new_bone_name
+        new_bone_name = bone.name
 
         mmd_root = self.rootObject().mmd_root
         for frame in mmd_root.display_item_frames:
@@ -480,8 +526,6 @@ class Model:
         for mesh in self.meshes():
             if old_bone_name in mesh.vertex_groups:
                 mesh.vertex_groups[old_bone_name].name = new_bone_name
-
-        bone.name = new_bone_name
 
     def build(self):
         rigidbody_world_enabled = rigid_body.setRigidBodyWorldEnabled(False)
@@ -723,8 +767,8 @@ class Model:
                         'mmd_bonetrack',
                         None)
                     bpy.context.scene.objects.link(empty)
-                    empty.location = target_bone.tail
-                    empty.empty_draw_size = 0.1
+                    empty.matrix_world = target_bone.matrix
+                    empty.empty_draw_size = 0.1 * self.__root.empty_draw_size
                     empty.empty_draw_type = 'ARROWS'
                     empty.mmd_type = 'TRACK_TARGET'
                     empty.hide = True
@@ -735,7 +779,8 @@ class Model:
 
                     self.__empty_parent_map[empty] = rigid_obj
 
-                    const = target_bone.constraints.new('DAMPED_TRACK')
+                    const_type = ('COPY_TRANSFORMS', 'COPY_ROTATION')[rigid_type-1]
+                    const = target_bone.constraints.new(const_type)
                     const.mute = True
                     const.name='mmd_tools_rigid_track'
                     const.target = empty
@@ -756,13 +801,6 @@ class Model:
                         logging.debug('        * Bone (%s): track target [%s]',
                             target_bone.name, ori_rigid_obj.name)
 
-        if rigid_obj.scale != mathutils.Vector((1,1,1)):
-            t = rigid_obj.hide
-            with bpyutils.select_object(rigid_obj):
-                logging.debug('          - apply scale: %s %s', rigid_obj.name, str(rigid_obj.scale[:]))
-                bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
-            rigid_obj.hide = t
-
         rb.collision_shape = rigid.shape
 
     def __getRigidRange(self, obj):
@@ -779,7 +817,7 @@ class Model:
 
         ncc_obj = bpyutils.createObject(name='ncc', object_data=None)
         ncc_obj.location = [0, 0, 0]
-        ncc_obj.empty_draw_size = 0.5
+        ncc_obj.empty_draw_size = 0.5 * self.__root.empty_draw_size
         ncc_obj.empty_draw_type = 'ARROWS'
         ncc_obj.mmd_type = 'NON_COLLISION_CONSTRAINT'
         ncc_obj.hide_render = True

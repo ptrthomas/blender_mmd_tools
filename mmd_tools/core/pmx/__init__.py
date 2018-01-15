@@ -264,7 +264,7 @@ class Header:
         logging.info('loading pmx header information...')
         self.sign = fs.readBytes(4)
         logging.debug('File signature is %s', self.sign)
-        if self.sign != self.PMX_SIGN:
+        if self.sign[:3] != self.PMX_SIGN[:3]:
             logging.info('File signature is invalid')
             logging.error('This file is unsupported format, or corrupt file.')
             raise InvalidFileError('File signature is invalid.')
@@ -273,8 +273,8 @@ class Header:
         if self.version != self.VERSION:
             logging.error('PMX version %.1f is unsupported', self.version)
             raise UnsupportedVersionError('unsupported PMX version: %.1f'%self.version)
-        if fs.readByte() != 8:
-            raise InvalidFileError
+        if fs.readByte() != 8 or self.sign[3] != self.PMX_SIGN[3]:
+            logging.warning(' * This file might be corrupted.')
         self.encoding = Encoding(fs.readByte())
         self.additional_uvs = fs.readByte()
         self.vertex_index_size = fs.readByte()
@@ -349,7 +349,7 @@ class Model:
         dsp_face = Display()
         dsp_face.isSpecial = True
         dsp_face.name = '表情'
-        dsp_face.name_e = 'Exp'
+        dsp_face.name_e = 'Facial'
         self.display.append(dsp_face)
 
         self.rigids = []
@@ -416,7 +416,7 @@ class Model:
         self.materials = []
         for i in range(num_materials):
             m = Material()
-            m.load(fs)
+            m.load(fs, num_textures)
             self.materials.append(m)
 
             logging.info('Material %d: %s', i, m.name)
@@ -537,8 +537,7 @@ class Model:
             logging.debug('  Name(english): %s', r.name_e)
             logging.debug('  Type: %s', rigid_types[r.type])
             logging.debug('  Mode: %s', rigid_modes[r.mode])
-            if r.bone is not None:
-                logging.debug('  Related bone: %s (index: %d)', self.bones[r.bone].name, r.bone)
+            logging.debug('  Related bone: %s', r.bone)
             logging.debug('  Collision group: %d', r.collision_group_number)
             logging.debug('  Collision group mask: 0x%x', r.collision_group_mask)
             logging.debug('  Size: (%f, %f, %f)', *r.size)
@@ -564,8 +563,8 @@ class Model:
 
             logging.info('Joint %d: %s', i, j.name)
             logging.debug('  Name(english): %s', j.name_e)
-            logging.debug('  Rigid A: %s (index: %d)', self.rigids[j.src_rigid].name, j.src_rigid)
-            logging.debug('  Rigid B: %s (index: %d)', self.rigids[j.dest_rigid].name, j.dest_rigid)
+            logging.debug('  Rigid A: %s', j.src_rigid)
+            logging.debug('  Rigid B: %s', j.dest_rigid)
             logging.debug('  Location: (%f, %f, %f)', *j.location)
             logging.debug('  Rotation: (%f, %f, %f)', *j.rotation)
             logging.debug('  Location Limit: (%f, %f, %f) - (%f, %f, %f)', *(j.minimum_location + j.maximum_location))
@@ -705,6 +704,8 @@ class Vertex:
         fs.writeVector(self.uv)
         for i in self.additional_uvs:
             fs.writeVector(i)
+        for i in range(fs.header().additional_uvs-len(self.additional_uvs)):
+            fs.writeVector((0,0,0,0))
         self.weight.save(fs)
         fs.writeFloat(self.edge_scale)
 
@@ -878,7 +879,10 @@ class Material:
             str(self.toon_texture),
             str(self.comment),)
 
-    def load(self, fs):
+    def load(self, fs, num_textures):
+        def __tex_index(index):
+            return index if 0 <= index < num_textures else -1
+
         self.name = fs.readStr()
         self.name_e = fs.readStr()
 
@@ -897,8 +901,8 @@ class Material:
         self.edge_color = fs.readVector(4)
         self.edge_size = fs.readFloat()
 
-        self.texture = fs.readTextureIndex()
-        self.sphere_texture = fs.readTextureIndex()
+        self.texture = __tex_index(fs.readTextureIndex())
+        self.sphere_texture = __tex_index(fs.readTextureIndex())
         self.sphere_texture_mode = fs.readSignedByte()
 
         self.is_shared_toon_texture = fs.readSignedByte()
@@ -906,7 +910,7 @@ class Material:
         if self.is_shared_toon_texture:
             self.toon_texture = fs.readSignedByte()
         else:
-            self.toon_texture = fs.readTextureIndex()
+            self.toon_texture = __tex_index(fs.readTextureIndex())
 
         self.comment = fs.readStr()
         self.vertex_count = fs.readInt()
@@ -1601,16 +1605,21 @@ def load(path):
         header.load(fs)
         fs.setHeader(header)
         model = Model()
-        model.load(fs)
+        try:
+            model.load(fs)
+        except struct.error as e:
+            logging.error(' * Corrupted file: %s', e)
+            #raise
         logging.info(' Finished loading.')
         logging.info('----------------------------------------')
         logging.info(' mmd_tools.pmx module')
         logging.info('****************************************')
         return model
 
-def save(path, model):
+def save(path, model, add_uv_count=0):
     with FileWriteStream(path) as fs:
         header = Header(model)
+        header.additional_uvs = max(0, min(4, add_uv_count)) # UV1~UV4
         header.save(fs)
         fs.setHeader(header)
         model.save(fs)

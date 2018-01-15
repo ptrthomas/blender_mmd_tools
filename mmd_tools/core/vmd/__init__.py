@@ -173,6 +173,28 @@ class _AnimationBase(collections.defaultdict):
                 frameKey.save(fin)
 
 
+class _AnimationListBase(list):
+    def __init__(self):
+        list.__init__(self)
+
+    @staticmethod
+    def frameClass():
+        raise NotImplementedError
+
+    def load(self, fin):
+        count, = struct.unpack('<L', fin.read(4))
+        for i in range(count):
+            cls = self.frameClass()
+            frameKey = cls()
+            frameKey.load(fin)
+            self.append(frameKey)
+
+    def save(self, fin):
+        fin.write(struct.pack('<L', len(self)))
+        for frameKey in self:
+            frameKey.save(fin)
+
+
 class BoneAnimation(_AnimationBase):
     def __init__(self):
         _AnimationBase.__init__(self)
@@ -191,50 +213,22 @@ class ShapeKeyAnimation(_AnimationBase):
         return ShapeKeyFrameKey
 
 
-class CameraAnimation(list):
+class CameraAnimation(_AnimationListBase):
     def __init__(self):
-        list.__init__(self)
-        self = []
+        _AnimationListBase.__init__(self)
 
     @staticmethod
     def frameClass():
         return CameraKeyFrameKey
 
-    def load(self, fin):
-        count, = struct.unpack('<L', fin.read(4))
-        for i in range(count):
-            cls = self.frameClass()
-            frameKey = cls()
-            frameKey.load(fin)
-            self.append(frameKey)
 
-    def save(self, fin):
-        fin.write(struct.pack('<L', len(self)))
-        for frameKey in self:
-            frameKey.save(fin)
-
-
-class LampAnimation(list):
+class LampAnimation(_AnimationListBase):
     def __init__(self):
-        list.__init__(self)
-        self = []
+        _AnimationListBase.__init__(self)
 
     @staticmethod
     def frameClass():
         return LampKeyFrameKey
-
-    def load(self, fin):
-        count, = struct.unpack('<L', fin.read(4))
-        for i in range(count):
-            cls = self.frameClass()
-            frameKey = cls()
-            frameKey.load(fin)
-            self.append(frameKey)
-
-    def save(self, fin):
-        fin.write(struct.pack('<L', len(self)))
-        for frameKey in self:
-            frameKey.save(fin)
 
 
 class File:
@@ -259,8 +253,8 @@ class File:
 
             self.header.load(fin)
             self.boneAnimation.load(fin)
-            self.shapeKeyAnimation.load(fin)
             try:
+                self.shapeKeyAnimation.load(fin)
                 self.cameraAnimation.load(fin)
                 self.lampAnimation.load(fin)
             except struct.error:

@@ -11,6 +11,13 @@ def _updateMMDBoneAdditionalTransform(prop, context):
     if p_bone and p_bone.mmd_bone.as_pointer() == prop.as_pointer():
         FnBone.apply_additional_transformation(prop.id_data)
 
+def _updateAdditionalTransformInfluence(prop, context):
+    p_bone = context.active_pose_bone
+    if p_bone and p_bone.mmd_bone.as_pointer() == prop.as_pointer():
+        FnBone(p_bone).update_additional_transform_influence()
+    else:
+        prop['is_additional_transform_dirty'] = True
+
 def _getAdditionalTransformBone(prop):
     arm = prop.id_data
     bone_id = prop.get('additional_transform_bone_id', -1)
@@ -54,12 +61,6 @@ class MMDBone(PropertyGroup):
         description='Deformation tier',
         min=0,
         max=100,
-        )
-
-    is_visible = BoolProperty(
-        name='Visible',
-        description='Is visible',
-        default=True,
         )
 
     is_controllable = BoolProperty(
@@ -159,7 +160,7 @@ class MMDBone(PropertyGroup):
         default=1,
         soft_min=-1,
         soft_max=1,
-        update=_updateMMDBoneAdditionalTransform,
+        update=_updateAdditionalTransformInfluence,
         )
 
     is_additional_transform_dirty = BoolProperty(

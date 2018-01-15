@@ -3,18 +3,19 @@ import os
 import collections
 import logging
 import time
-import re
 
 import bpy
 import mathutils
 
 import mmd_tools.core.model as mmd_model
-import mmd_tools.core.pmx as pmx
-from mmd_tools.core.material import FnMaterial
 from mmd_tools import utils
-from mmd_tools import translations
 from mmd_tools import bpyutils
-from mmd_tools.core.vmd.importer import VMDImporter
+from mmd_tools.core import pmx
+from mmd_tools.core.bone import FnBone
+from mmd_tools.core.material import FnMaterial
+from mmd_tools.core.vmd.importer import BoneConverter
+from mmd_tools.operators.display_item import DisplayItemQuickSetup
+from mmd_tools.operators.misc import MoveObject
 
 
 class PMXImporter:
@@ -60,6 +61,7 @@ class PMXImporter:
         self.__imageTable = {}
 
         self.__sdefVertices = {} # pmx vertices
+        self.__vertex_map = None
 
         self.__materialFaceCountTable = None
 
@@ -80,29 +82,29 @@ class PMXImporter:
         """ Create main objects and link them to scene.
         """
         pmxModel = self.__model
-        self.__rig = mmd_model.Model.create(pmxModel.name, pmxModel.name_e, self.__scale)
+        obj_name = bpy.path.display_name(pmxModel.filepath)
+        self.__rig = mmd_model.Model.create(pmxModel.name, pmxModel.name_e, self.__scale, obj_name)
         root = self.__rig.rootObject()
         mmd_root = root.mmd_root
+        self.__root = root
 
         root['import_folder'] = os.path.dirname(pmxModel.filepath)
 
-        txt = bpy.data.texts.new(pmxModel.name+'_comment')
+        txt = bpy.data.texts.new(obj_name+'_comment')
         txt.from_string(pmxModel.comment.replace('\r', ''))
         txt.current_line_index = 0
         mmd_root.comment_text = txt.name
-        txt = bpy.data.texts.new(pmxModel.name+'_comment_e')
+        txt = bpy.data.texts.new(obj_name+'_comment_e')
         txt.from_string(pmxModel.comment_e.replace('\r', ''))
         txt.current_line_index = 0
         mmd_root.comment_e_text = txt.name
 
         self.__armObj = self.__rig.armature()
         self.__armObj.hide = True
-
-        # Temporarily set the root object as active to let property function hooks access it.
-        self.__targetScene.objects.active = root
+        self.__armObj.select = False
 
     def __createMeshObject(self):
-        model_name = self.__model.name
+        model_name = self.__root.name
         self.__meshObj = bpy.data.objects.new(name=model_name+'_mesh', object_data=bpy.data.meshes.new(name=model_name))
         self.__meshObj.parent = self.__armObj
         self.__targetScene.objects.link(self.__meshObj)
@@ -112,7 +114,7 @@ class PMXImporter:
             assert(len(self.__meshObj.data.vertices) > 0)
             assert(len(self.__meshObj.data.shape_keys.key_blocks) > 1)
             return
-        utils.selectAObject(self.__meshObj)
+        self.__targetScene.objects.active = self.__meshObj
         bpy.ops.object.shape_key_add()
 
     def __importVertexGroup(self):
@@ -132,8 +134,15 @@ class PMXImporter:
         vg_edge_scale = self.__meshObj.vertex_groups.new(name='mmd_edge_scale')
         vg_vertex_order = self.__meshObj.vertex_groups.new(name='mmd_vertex_order')
 
+        pmx_vertices = pmxModel.vertices
+        vertex_map = self.__vertex_map
+        if vertex_map:
+            indices = collections.OrderedDict(vertex_map).keys()
+            pmx_vertices = (pmxModel.vertices[x] for x in indices)
+            vertex_count = len(indices)
+
         mesh.vertices.add(count=vertex_count)
-        for i, pv in enumerate(pmxModel.vertices):
+        for i, pv in enumerate(pmx_vertices):
             bv = mesh.vertices[i]
 
             bv.co = mathutils.Vector(pv.co) * self.TO_BLE_MATRIX * self.__scale
@@ -235,14 +244,20 @@ class PMXImporter:
 
             for b_bone, m_bone in zip(editBoneTable, pmx_bones):
                 if m_bone.isIK and m_bone.target != -1:
-                    b_bone_ik = editBoneTable[m_bone.target].parent
-                    if b_bone_ik and b_bone_ik.length < 0.001:
-                        logging.debug(' * special ik link 0 %s', b_bone_ik.name)
-                        loc = b_bone.head - b_bone_ik.head
-                        if loc.length < 0.001:
-                            logging.warning('   ** unsolved bone **')
-                        else:
-                            b_bone_ik.tail = b_bone_ik.head + loc
+                    logging.debug(' - checking IK links of %s', b_bone.name)
+                    b_target = editBoneTable[m_bone.target]
+                    for i in range(len(m_bone.ik_links)):
+                        b_bone_link = editBoneTable[m_bone.ik_links[i].target]
+                        if self.__fix_IK_links or b_bone_link.length < 0.001:
+                            b_bone_tail = b_target if i == 0 else editBoneTable[m_bone.ik_links[i-1].target]
+                            loc = b_bone_tail.head - b_bone_link.head
+                            if loc.length < 0.001:
+                                logging.warning('   ** unsolved IK link %s **', b_bone_link.name)
+                            elif b_bone_tail.parent != b_bone_link:
+                                logging.warning('   ** skipped IK link %s **', b_bone_link.name)
+                            elif (b_bone_link.tail - b_bone_tail.head).length > 1e-4:
+                                logging.debug('   * fix IK link %s', b_bone_link.name)
+                                b_bone_link.tail = b_bone_link.head + loc
 
             for b_bone, m_bone in zip(editBoneTable, pmx_bones):
                 # Set the length of too short bones to 1 because Blender delete them.
@@ -253,6 +268,10 @@ class PMXImporter:
                         logging.debug(' * special tip bone %s, display %s', b_bone.name, str(m_bone.displayConnection))
                         specialTipBones.append(b_bone.name)
 
+            for b_bone, m_bone in zip(editBoneTable, pmx_bones):
+                if m_bone.localCoordinate is not None:
+                    FnBone.update_bone_roll(b_bone, m_bone.localCoordinate.x_axis, m_bone.localCoordinate.z_axis)
+
         return nameTable, specialTipBones
 
     def __sortPoseBonesByBoneIndex(self, pose_bones, bone_names):
@@ -262,22 +281,24 @@ class PMXImporter:
         return r
 
     @staticmethod
-    def __convertIKLimitAngles(min_angle, max_angle, pose_bone):
-        mat = mathutils.Matrix([
-            [1.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0],
-            [0.0, 1.0, 0.0]])
+    def convertIKLimitAngles(min_angle, max_angle, bone_matrix, invert=False):
+        mat = mathutils.Matrix([[1,0,0], [0,0,1], [0,1,0]])
+        mat = bone_matrix.to_3x3().transposed() * mat * -1
+        if invert:
+            mat.invert()
 
-        def __align_rotation(rad):
-            from math import pi
-            base_rad = -pi/2 if rad < 0 else pi/2
-            return int(0.5 + rad/base_rad) * base_rad
-
-        rot = pose_bone.bone.matrix_local.to_euler()
-        rot.x = __align_rotation(rot.x)
-        rot.y = __align_rotation(rot.y)
-        rot.z = __align_rotation(rot.z)
-        m = rot.to_matrix().transposed() * mat * -1
+        # align matrix to global axes
+        m = mathutils.Matrix([[0,0,0], [0,0,0], [0,0,0]])
+        i_set, j_set = [0, 1, 2], [0, 1, 2]
+        for _ in range(3):
+            ii, jj = i_set[0], j_set[0]
+            for i in i_set:
+                for j in j_set:
+                    if abs(mat[i][j]) > abs(mat[ii][jj]):
+                        ii, jj = i, j
+            i_set.remove(ii)
+            j_set.remove(jj)
+            m[ii][jj] = -1 if mat[ii][jj] < 0 else 1
 
         new_min_angle = m * mathutils.Vector(min_angle)
         new_max_angle = m * mathutils.Vector(max_angle)
@@ -339,7 +360,7 @@ class PMXImporter:
                 ikConst.chain_count -= 1
             if i.maximumAngle is not None:
                 bone = pose_bones[i.target]
-                minimum, maximum = self.__convertIKLimitAngles(i.minimumAngle, i.maximumAngle, bone)
+                minimum, maximum = self.convertIKLimitAngles(i.minimumAngle, i.maximumAngle, bone.bone.matrix_local)
 
                 bone.use_ik_limit_x = True
                 bone.use_ik_limit_y = True
@@ -354,7 +375,7 @@ class PMXImporter:
                 c = bone.constraints.new(type='LIMIT_ROTATION')
                 c.mute = not is_valid_ik
                 c.name = 'mmd_ik_limit_override'
-                c.owner_space = 'WORLD' # 'WORLD' / 'LOCAL'
+                c.owner_space = 'POSE' # WORLD/POSE/LOCAL
                 c.max_x = maximum[0]
                 c.max_y = maximum[1]
                 c.max_z = maximum[2]
@@ -376,7 +397,6 @@ class PMXImporter:
             mmd_bone = b_bone.mmd_bone
             mmd_bone.name_j = pmx_bone.name
             mmd_bone.name_e = pmx_bone.name_e
-            mmd_bone.is_visible = pmx_bone.visible
             mmd_bone.is_controllable = pmx_bone.isControllable
             mmd_bone.transform_order = pmx_bone.transform_order
             mmd_bone.transform_after_dynamics = pmx_bone.transAfterPhis
@@ -392,18 +412,6 @@ class PMXImporter:
             else:
                 logging.debug('bone %s is not using a vector tail and is not a tip bone. DisplayConnection: %s', 
                               pmx_bone.name, str(pmx_bone.displayConnection))
-
-            #if pmx_bone.axis is not None and pmx_bone.parent != -1:
-            #    #The twist bones (type 8 in PMD) are special, without this the tail will not be displayed during export
-            #    pose_bones[pmx_bone.parent].mmd_bone.use_tail_location = True
-
-            #Movable bones should have a tail too
-            #if pmx_bone.isMovable and pmx_bone.visible:
-            #    mmd_bone.use_tail_location = True
-
-            #Some models don't have correct tail bones, let's try to fix it
-            #if re.search(u'先$', pmx_bone.name):
-            #    mmd_bone.is_tip = True
 
             b_bone.bone.hide = not pmx_bone.visible #or mmd_bone.is_tip
 
@@ -443,7 +451,7 @@ class PMXImporter:
         start_time = time.time()
         self.__rigidTable = {}
         rigid_pool = self.__rig.createRigidBodyPool(len(self.__model.rigids))
-        for rigid, rigid_obj in zip(self.__model.rigids, rigid_pool):
+        for i, (rigid, rigid_obj) in enumerate(zip(self.__model.rigids, rigid_pool)):
             loc = mathutils.Vector(rigid.location) * self.TO_BLE_MATRIX * self.__scale
             rot = mathutils.Vector(rigid.rotation) * self.TO_BLE_MATRIX * -1
             if rigid.type == pmx.Rigid.TYPE_BOX:
@@ -471,14 +479,15 @@ class PMXImporter:
                 bone = None if rigid.bone == -1 or rigid.bone is None else self.__boneTable[rigid.bone].name,
                 )
             obj.hide = True
-            self.__rigidTable[len(self.__rigidTable)] = obj
+            MoveObject.set_index(obj, i)
+            self.__rigidTable[i] = obj
 
         logging.debug('Finished importing rigid bodies in %f seconds.', time.time() - start_time)
 
     def __importJoints(self):
         start_time = time.time()
         joint_pool = self.__rig.createJointPool(len(self.__model.joints))
-        for joint, joint_obj in zip(self.__model.joints, joint_pool):
+        for i, (joint, joint_obj) in enumerate(zip(self.__model.joints, joint_pool)):
             loc = mathutils.Vector(joint.location) * self.TO_BLE_MATRIX * self.__scale
             rot = mathutils.Vector(joint.rotation) * self.TO_BLE_MATRIX * -1
 
@@ -498,6 +507,7 @@ class PMXImporter:
                 spring_angular = mathutils.Vector(joint.spring_rotation_constant) * self.TO_BLE_MATRIX,
                 )
             obj.hide = True
+            MoveObject.set_index(obj, i)
 
         logging.debug('Finished importing joints in %f seconds.', time.time() - start_time)
 
@@ -562,12 +572,13 @@ class PMXImporter:
     def __importFaces(self):
         pmxModel = self.__model
         mesh = self.__meshObj.data
+        vertex_map = self.__vertex_map
 
         mesh.tessfaces.add(len(pmxModel.faces))
         uvLayer = mesh.tessface_uv_textures.new()
         for i, f in enumerate(pmxModel.faces):
             bf = mesh.tessfaces[i]
-            bf.vertices_raw = list(f) + [0]
+            bf.vertices_raw = list(vertex_map[x][1] for x in f)+[0] if vertex_map else list(f)+[0]
             bf.use_smooth = True
 
             uv = uvLayer.data[i]
@@ -578,9 +589,40 @@ class PMXImporter:
             bf.material_index = self.__getMaterialIndexFromFaceIndex(i)
             uv.image = self.__imageTable.get(bf.material_index, None)
 
+        if pmxModel.header and pmxModel.header.additional_uvs:
+            logging.info('Importing %d additional uvs', pmxModel.header.additional_uvs)
+            zw_data_map = collections.OrderedDict()
+            for i in range(pmxModel.header.additional_uvs):
+                add_uv = mesh.tessface_uv_textures.new('UV'+str(i+1))
+                logging.info(' - %s...(uv channels)', add_uv.name)
+                zw_data = []
+                has_zw = False
+                for uv, f in zip(add_uv.data, pmxModel.faces):
+                    uvs = [pmxModel.vertices[x].additional_uvs[i] for x in f]
+                    uv.uv1 = self.flipUV_V(uvs[0][:2])
+                    uv.uv2 = self.flipUV_V(uvs[1][:2])
+                    uv.uv3 = self.flipUV_V(uvs[2][:2])
+                    zws = tuple(x[2:] for x in uvs)
+                    zw_data.append(zws)
+                    has_zw = has_zw or any(any(x) for x in zws)
+                if not has_zw:
+                    logging.info('\t- zw are all zeros: %s', add_uv.name)
+                else:
+                    zw_data_map['_'+add_uv.name] = zw_data
+            for name, zw_seq in zw_data_map.items():
+                logging.info(' - %s...(zw channels of %s)', name, name[1:])
+                add_zw = mesh.tessface_uv_textures.new(name)
+                if add_zw is None:
+                    logging.warning('\t* Lost zw channels')
+                    continue
+                for uv, zws in zip(add_zw.data, zw_seq):
+                    uv.uv1 = self.flipUV_V(zws[0])
+                    uv.uv2 = self.flipUV_V(zws[1])
+                    uv.uv3 = self.flipUV_V(zws[2])
+
     def __importVertexMorphs(self):
         pmxModel = self.__model
-        mmd_root = self.__rig.rootObject().mmd_root
+        mmd_root = self.__root.mmd_root
         self.__createBasisShapeKey()
         categories = self.CATEGORIES
         for morph in filter(lambda x: isinstance(x, pmx.VertexMorph), pmxModel.morphs):
@@ -595,7 +637,7 @@ class PMXImporter:
                 shapeKeyPoint.co = shapeKeyPoint.co + offset * self.__scale
 
     def __importMaterialMorphs(self):
-        mmd_root = self.__rig.rootObject().mmd_root
+        mmd_root = self.__root.mmd_root
         categories = self.CATEGORIES
         for morph in [x for x in self.__model.morphs if isinstance(x, pmx.MaterialMorph)]:
             mat_morph = mmd_root.material_morphs.add()
@@ -619,7 +661,7 @@ class PMXImporter:
                 data.toon_texture_factor = morph_data.toon_texture_factor
 
     def __importBoneMorphs(self):
-        mmd_root = self.__rig.rootObject().mmd_root
+        mmd_root = self.__root.mmd_root
         categories = self.CATEGORIES
         for morph in [x for x in self.__model.morphs if isinstance(x, pmx.BoneMorph)]:
             bone_morph = mmd_root.bone_morphs.add()
@@ -632,12 +674,12 @@ class PMXImporter:
                 data = bone_morph.data.add()
                 bl_bone = self.__boneTable[morph_data.index]
                 data.bone = bl_bone.name
-                mat = VMDImporter.makeVMDBoneLocationToBlenderMatrix(bl_bone)
-                data.location = mat * mathutils.Vector(morph_data.location_offset) * self.__scale
-                data.rotation = VMDImporter.convertVMDBoneRotationToBlender(bl_bone, morph_data.rotation_offset)
+                converter = BoneConverter(bl_bone, self.__scale)
+                data.location = converter.convert_location(morph_data.location_offset)
+                data.rotation = converter.convert_rotation(morph_data.rotation_offset)
 
     def __importUVMorphs(self):
-        mmd_root = self.__rig.rootObject().mmd_root
+        mmd_root = self.__root.mmd_root
         categories = self.CATEGORIES
         for morph in [x for x in self.__model.morphs if isinstance(x, pmx.UVMorph)]:
             uv_morph = mmd_root.uv_morphs.add()
@@ -650,10 +692,10 @@ class PMXImporter:
                 dx, dy, dz, dw = morph_data.offset
                 data = uv_morph.data.add()
                 data.index = idx
-                data.offset = (dx, -dy, dz, dw) # dz, dw are not used
+                data.offset = (dx, -dy, dz, -dw)
 
     def __importGroupMorphs(self):
-        mmd_root = self.__rig.rootObject().mmd_root
+        mmd_root = self.__root.mmd_root
         categories = self.CATEGORIES
         morph_types = self.MORPH_TYPES
         pmx_morphs = self.__model.morphs
@@ -673,7 +715,7 @@ class PMXImporter:
 
     def __importDisplayFrames(self):
         pmxModel = self.__model
-        root = self.__rig.rootObject()
+        root = self.__root
         morph_types = self.MORPH_TYPES
 
         for i in pmxModel.display:
@@ -694,6 +736,8 @@ class PMXImporter:
                 else:
                     raise Exception('Unknown display item type.')
 
+        DisplayItemQuickSetup.apply_bone_groups(root.mmd_root, self.__armObj)
+
     def __addArmatureModifier(self, meshObj, armObj):
         armModifier = meshObj.modifiers.new(name='Armature', type='ARMATURE')
         armModifier.object = armObj
@@ -706,8 +750,13 @@ class PMXImporter:
             logging.info(' * No support for custom normals!!')
             return
         logging.info('Setting custom normals...')
-        custom_normals = [(mathutils.Vector(v.normal).xzy).normalized() for v in self.__model.vertices]
-        mesh.normals_split_custom_set_from_vertices(custom_normals)
+        if self.__vertex_map:
+            verts, faces = self.__model.vertices, self.__model.faces
+            custom_normals = [(mathutils.Vector(verts[i].normal).xzy).normalized() for f in faces for i in f]
+            mesh.normals_split_custom_set(custom_normals)
+        else:
+            custom_normals = [(mathutils.Vector(v.normal).xzy).normalized() for v in self.__model.vertices]
+            mesh.normals_split_custom_set_from_vertices(custom_normals)
         mesh.use_auto_smooth = True
         logging.info('   - Done!!')
 
@@ -718,13 +767,13 @@ class PMXImporter:
                 continue
             self.__rig.renameBone(i.name, utils.convertNameToLR(i.name, use_underscore))
             # self.__meshObj.vertex_groups[i.mmd_bone.name_j].name = i.name
-            
+
     def __translateBoneNames(self):
         pose_bones = self.__armObj.pose.bones
         for i in pose_bones:
             if i.is_mmd_shadow_bone:
                 continue
-            self.__rig.renameBone(i.name, translations.translateFromJp(i.name))
+            self.__rig.renameBone(i.name, self.__translator.translate(i.name))
 
     def __fixRepeatedMorphName(self):
         used_names_map = {}
@@ -743,10 +792,13 @@ class PMXImporter:
 
         types = args.get('types', set())
         clean_model = args.get('clean_model', False)
+        remove_doubles = args.get('remove_doubles', False)
         self.__scale = args.get('scale', 1.0)
         self.__use_mipmap = args.get('use_mipmap', True)
         self.__sph_blend_factor = args.get('sph_blend_factor', 1.0)
         self.__spa_blend_factor = args.get('spa_blend_factor', 1.0)
+        self.__fix_IK_links = args.get('fix_IK_links', False)
+        self.__translator = args.get('translator', None)
 
         logging.info('****************************************')
         logging.info(' mmd_tools.import_pmx module')
@@ -762,6 +814,8 @@ class PMXImporter:
         if 'MESH' in types:
             if clean_model:
                 _PMXCleaner.clean(self.__model, 'MORPHS' not in types)
+            if remove_doubles:
+                self.__vertex_map = _PMXCleaner.remove_doubles(self.__model, 'MORPHS' not in types)
             self.__createMeshObject()
             self.__importVertices()
             self.__importMaterials()
@@ -779,7 +833,7 @@ class PMXImporter:
             if args.get('rename_LR_bones', False):
                 use_underscore = args.get('use_underscore', False)
                 self.__renameLRBones(use_underscore)
-            if args.get('translate_to_english', False):
+            if self.__translator:
                 self.__translateBoneNames()
             self.__rig.applyAdditionalTransformConstraints()
 
@@ -803,10 +857,10 @@ class PMXImporter:
             self.__addArmatureModifier(self.__meshObj, self.__armObj)
 
         #bpy.context.scene.gravity[2] = -9.81 * 10 * self.__scale
-        root = self.__rig.rootObject()
-        if 'MESH' not in types:
+        root = self.__root
+        if 'ARMATURE' in types:
             root.mmd_root.show_armature = True
-        else:
+        if 'MESH' in types:
             root.mmd_root.show_meshes = True
         self.__targetScene.objects.active = root
         root.select = True
@@ -816,42 +870,18 @@ class PMXImporter:
         logging.info(' mmd_tools.import_pmx module')
         logging.info('****************************************')
 
+
 class _PMXCleaner:
     @classmethod
     def clean(cls, pmx_model, mesh_only):
         logging.info('Cleaning PMX data...')
-        pmx_materials = pmx_model.materials
         pmx_faces = pmx_model.faces
         pmx_vertices = pmx_model.vertices
 
         # clean face/vertex
-        index_map = {}
-        used_faces = set()
-        new_face_count = 0
-        face_iter = iter(pmx_faces)
-        for mat in pmx_materials:
-            new_vertex_count = 0
-            for i in range(int(mat.vertex_count/3)):
-                f = next(face_iter)
+        cls.__clean_pmx_faces(pmx_faces, pmx_model.materials, lambda f: frozenset(f))
 
-                f_key = frozenset(f)
-                if len(f_key) != 3 or f_key in used_faces:
-                    continue
-                used_faces.add(f_key)
-
-                for v in f:
-                    index_map[v] = v
-                pmx_faces[new_face_count] = list(f)
-                new_face_count += 1
-                new_vertex_count += 3
-            mat.vertex_count = new_vertex_count
-        face_iter = None
-        if new_face_count == len(pmx_faces):
-            logging.info('   (faces is clean)')
-        else:
-            logging.warning('   - removed %d faces', len(pmx_faces)-new_face_count)
-            del pmx_faces[new_face_count:]
-
+        index_map = {v:v for f in pmx_faces for v in f}
         is_index_clean = len(index_map) == len(pmx_vertices)
         if is_index_clean:
             logging.info('   (vertices is clean)')
@@ -878,13 +908,92 @@ class _PMXCleaner:
             def __update_index(x):
                 x.index = index_map.get(x.index, None)
                 return x.index is not None
+            cls.__clean_pmx_morphs(pmx_model.morphs, __update_index)
+        logging.info('   - Done!!')
+
+    @classmethod
+    def remove_doubles(cls, pmx_model, mesh_only):
+        logging.info('Removing doubles...')
+        pmx_vertices = pmx_model.vertices
+
+        vertex_map = [None] * len(pmx_vertices)
+        # gather vertex data
+        for i, v in enumerate(pmx_vertices):
+            vertex_map[i] = [tuple(v.co)]
+        if not mesh_only:
             for m in pmx_model.morphs:
                 if not isinstance(m, pmx.VertexMorph) and not isinstance(m, pmx.UVMorph):
                     continue
-                old_len = len(m.offsets)
-                m.offsets = [x for x in m.offsets if __update_index(x)]
-                counts = old_len - len(m.offsets)
-                if counts:
-                    logging.warning('   - removed %d offsets(%d) in morph %s', counts, old_len, m.name)
-        logging.info('   - Done!!')
+                for x in m.offsets:
+                    vertex_map[x.index].append(tuple(x.offset))
+        # generate vertex merging table
+        keys = {}
+        for i, v in enumerate(vertex_map):
+            k = tuple(v)
+            if k in keys:
+                vertex_map[i] = keys[k] # merge pmx_vertices[i] to pmx_vertices[keys[k][0]]
+            else:
+                vertex_map[i] = keys[k] = (i, len(keys)) # (pmx index, blender index)
+        counts = len(vertex_map) - len(keys)
+        keys.clear()
+        if counts:
+            logging.warning('   - %d vertices will be removed', counts)
+        else:
+            logging.info('   - Done (no changes)!!')
+            return None
+
+        # clean face
+        #face_key_func = lambda f: frozenset(vertex_map[x][0] for x in f)
+        face_key_func = lambda f: frozenset({vertex_map[x][0]:tuple(pmx_vertices[x].uv) for x in f}.items())
+        cls.__clean_pmx_faces(pmx_model.faces, pmx_model.materials, face_key_func)
+
+        if mesh_only:
+            logging.info('   - Done (mesh only)!!')
+        else:
+            # clean vertex/uv morphs
+            def __update_index(x):
+                indices = vertex_map[x.index]
+                x.index = indices[1] if x.index == indices[0] else None
+                return x.index is not None
+            cls.__clean_pmx_morphs(pmx_model.morphs, __update_index)
+            logging.info('   - Done!!')
+        return vertex_map
+
+
+    @staticmethod
+    def __clean_pmx_faces(pmx_faces, pmx_materials, face_key_func):
+        new_face_count = 0
+        face_iter = iter(pmx_faces)
+        for mat in pmx_materials:
+            used_faces = set()
+            new_vertex_count = 0
+            for i in range(int(mat.vertex_count/3)):
+                f = next(face_iter)
+
+                f_key = face_key_func(f)
+                if len(f_key) != 3 or f_key in used_faces:
+                    continue
+                used_faces.add(f_key)
+
+                pmx_faces[new_face_count] = list(f)
+                new_face_count += 1
+                new_vertex_count += 3
+            mat.vertex_count = new_vertex_count
+        face_iter = None
+        if new_face_count == len(pmx_faces):
+            logging.info('   (faces is clean)')
+        else:
+            logging.warning('   - removed %d faces', len(pmx_faces)-new_face_count)
+            del pmx_faces[new_face_count:]
+
+    @staticmethod
+    def __clean_pmx_morphs(pmx_morphs, index_update_func):
+        for m in pmx_morphs:
+            if not isinstance(m, pmx.VertexMorph) and not isinstance(m, pmx.UVMorph):
+                continue
+            old_len = len(m.offsets)
+            m.offsets = [x for x in m.offsets if index_update_func(x)]
+            counts = old_len - len(m.offsets)
+            if counts:
+                logging.warning('   - removed %d (of %d) offsets of "%s"', counts, old_len, m.name)
 

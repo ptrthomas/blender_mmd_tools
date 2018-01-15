@@ -1,14 +1,12 @@
 # -*- coding: utf-8 -*-
 
 import logging
-import os
 import re
 
 import bpy
 import math
 import mathutils
 
-from collections import OrderedDict
 from mmd_tools.core import vmd
 from mmd_tools.core.camera import MMDCamera
 from mmd_tools.core.lamp import MMDLamp
@@ -21,12 +19,13 @@ class _FCurve:
         self.__fcurve = None
 
     def setFCurve(self, fcurve):
+        assert(fcurve.is_valid and self.__fcurve is None)
         self.__fcurve = fcurve
 
     def frameNumbers(self):
         if self.__fcurve is None:
             return set()
-        return {int(kp.co[0]) for kp in self.__fcurve.keyframe_points}
+        return {int(kp.co[0]+0.5) for kp in self.__fcurve.keyframe_points}
 
     @staticmethod
     def getVMDControlPoints(kp0, kp1):
@@ -53,78 +52,74 @@ class _FCurve:
                 yield [self.__default_value, ((20, 20), (107, 107))]
             return
 
+        evaluate = fcurve.evaluate
         frame_iter = iter(frame_numbers)
         prev_kp = None
+        prev_i = None
         for kp in sorted(fcurve.keyframe_points, key=lambda x: x.co[0]):
-            i = int(kp.co[0])
+            i = int(kp.co[0]+0.5)
+            if i == prev_i:
+                prev_kp = kp
+                continue
+            prev_i = i
             frames = []
             while True:
                 frame = next(frame_iter)
                 frames.append(frame)
                 if frame >= i:
                     break
-            assert(len(frames) >= 1 and frames[-1] == i and i > 0)
+            assert(len(frames) >= 1 and frames[-1] == i)
             if prev_kp is None:
-                for i in frames: # starting key frames
+                for f in frames: # starting key frames
                     yield [kp.co[1], ((20, 20), (107, 107))]
             elif len(frames) == 1:
                 yield [kp.co[1], self.getVMDControlPoints(prev_kp, kp)]
             else:
                 #FIXME better evaluated values and interpolations
                 for f in frames:
-                    yield [fcurve.evaluate(f), ((20, 20), (107, 107))]
+                    yield [evaluate(f), ((20, 20), (107, 107))]
             prev_kp = kp
 
-        # ending key frames
-        try:
-            while next(frame_iter) > 0:
-                yield [prev_kp.co[1], ((20, 20), (107, 107))]
-        except StopIteration:
-            pass
+        for f in frame_iter: # ending key frames
+            yield [prev_kp.co[1], ((20, 20), (107, 107))]
 
 
 class VMDExporter:
 
     def __init__(self):
         self.__scale = 1
-        self.__frame_offset = -1
+        self.__frame_start = 1
+        self.__frame_end = float('inf')
+        self.__bone_converter_cls = vmd.importer.BoneConverter
 
-    @staticmethod
-    def makeVMDBoneLocationMatrix(blender_bone):
-        #mat = mathutils.Matrix([
-        #        [blender_bone.x_axis.x, blender_bone.x_axis.y, blender_bone.x_axis.z, 0.0],
-        #        [blender_bone.y_axis.x, blender_bone.y_axis.y, blender_bone.y_axis.z, 0.0],
-        #        [blender_bone.z_axis.x, blender_bone.z_axis.y, blender_bone.z_axis.z, 0.0],
-        #        [0.0, 0.0, 0.0, 1.0]
-        #        ])
-        mat = blender_bone.bone.matrix_local.to_3x3().transposed().to_4x4()
-        mat2 = mathutils.Matrix([
-            [1.0, 0.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0, 0.0],
-            [0.0, 1.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0, 1.0]])
-        return mat2 * mat.inverted()
-
-    @staticmethod
-    def convertToVMDBoneRotation(blender_bone, rotation):
-        #mat = mathutils.Matrix()
-        #mat[0][0], mat[1][0], mat[2][0] = blender_bone.x_axis.x, blender_bone.y_axis.x, blender_bone.z_axis.x
-        #mat[0][1], mat[1][1], mat[2][1] = blender_bone.x_axis.y, blender_bone.y_axis.y, blender_bone.z_axis.y
-        #mat[0][2], mat[1][2], mat[2][2] = blender_bone.x_axis.z, blender_bone.y_axis.z, blender_bone.z_axis.z
-        mat = blender_bone.bone.matrix_local.to_3x3().transposed().to_4x4()
-        (vec, angle) = rotation.to_axis_angle()
-        vec = mat.inverted() * vec
-        v = mathutils.Vector((-vec.x, -vec.z, -vec.y))
-        return mathutils.Quaternion(v, angle).normalized()
-
-    @staticmethod
-    def __allFrameKeys(curves):
+    def __allFrameKeys(self, curves):
         all_frames = set()
         for i in curves:
             all_frames |= i.frameNumbers()
+
+        if len(all_frames) < 1:
+            return
+
+        frame_start = min(all_frames)
+        if frame_start < self.__frame_start:
+            frame_start = self.__frame_start
+            all_frames.add(frame_start)
+
+        frame_end = max(all_frames)
+        if frame_end > self.__frame_end:
+            frame_end = self.__frame_end
+            all_frames.add(frame_end)
+
         all_frames = sorted(all_frames)
         all_keys = [i.sampleFrames(all_frames) for i in curves]
-        return zip(all_frames, *all_keys)
+        #return zip(all_frames, *all_keys)
+        for data in zip(all_frames, *all_keys):
+            frame_number = data[0]
+            if frame_number < frame_start:
+                continue
+            if frame_number > frame_end:
+                break
+            yield data
 
     @staticmethod
     def __minRotationDiff(prev_q, curr_q):
@@ -176,22 +171,21 @@ class VMDExporter:
         animation_data = armObj.animation_data
         if animation_data is None or animation_data.action is None:
             logging.warning('[WARNING] armature "%s" has no animation data', armObj.name)
-            return
+            return None
 
         vmd_bone_anim = vmd.BoneAnimation()
 
         anim_bones = {}
         rePath = re.compile(r'^pose\.bones\["(.+)"\]\.([a-z_]+)$')
         for fcurve in animation_data.action.fcurves:
-            if not fcurve.is_valid:
-                logging.warning(' * FCurve is not valid: %s', fcurve.data_path)
-                continue
             m = rePath.match(fcurve.data_path)
             if m is None:
                 continue
             bone = armObj.pose.bones.get(m.group(1), None)
             if bone is None:
                 logging.warning(' * Bone not found: %s', m.group(1))
+                continue
+            if bone.is_mmd_shadow_bone:
                 continue
             prop_name = m.group(2)
             if prop_name not in {'location', 'rotation_quaternion'}:
@@ -211,14 +205,13 @@ class VMDExporter:
             assert(key_name not in vmd_bone_anim) # VMD bone name collision
             frame_keys = vmd_bone_anim[key_name]
 
-            mat = self.makeVMDBoneLocationMatrix(bone)
+            converter = self.__bone_converter_cls(bone, self.__scale, invert=True)
             prev_rot = None
             for frame_number, x, y, z, rw, rx, ry, rz in self.__allFrameKeys(bone_curves):
                 key = vmd.BoneFrameKey()
-                key.frame_number = frame_number + self.__frame_offset
-                key.location = mat * mathutils.Vector([x[0], y[0], z[0]]) * self.__scale
-                curr_rot = mathutils.Quaternion([rw[0], rx[0], ry[0], rz[0]])
-                curr_rot = self.convertToVMDBoneRotation(bone, curr_rot)
+                key.frame_number = frame_number - self.__frame_start
+                key.location = converter.convert_location([x[0], y[0], z[0]])
+                curr_rot = converter.convert_rotation([rx[0], ry[0], rz[0], rw[0]])
                 if prev_rot is not None:
                     curr_rot = self.__minRotationDiff(prev_rot, curr_rot)
                 prev_rot = curr_rot
@@ -249,12 +242,23 @@ class VMDExporter:
             m = rePath.match(fcurve.data_path)
             if m is None:
                 continue
+
             key_name = m.group(1)
+            kb = meshObj.data.shape_keys.key_blocks.get(key_name, None)
+            if kb is None:
+                logging.warning(' * Shape key not found: %s', key_name)
+                continue
+
+            assert(key_name not in vmd_morph_anim)
             anim = vmd_morph_anim[key_name]
-            for kp in fcurve.keyframe_points:
+
+            curve = _FCurve(kb.value)
+            curve.setFCurve(fcurve)
+
+            for frame_number, weight in self.__allFrameKeys([curve]):
                 key = vmd.ShapeKeyFrameKey()
-                key.frame_number = int(kp.co[0]) + self.__frame_offset
-                key.weight = kp.co[1]
+                key.frame_number = frame_number - self.__frame_start
+                key.weight = weight[0]
                 anim.append(key)
             logging.info('(mesh) frames:%5d  name: %s', len(anim), key_name)
         return vmd_morph_anim
@@ -299,7 +303,7 @@ class VMDExporter:
 
         for frame_number, x, y, z, rx, ry, rz, fov, persp, distance in self.__allFrameKeys(cam_curves):
             key = vmd.CameraKeyFrameKey()
-            key.frame_number = frame_number + self.__frame_offset
+            key.frame_number = frame_number - self.__frame_start
             key.location = [x[0]*self.__scale, z[0]*self.__scale, y[0]*self.__scale]
             key.rotation = [rx[0], rz[0], ry[0]] # euler
             key.angle = int(0.5 + math.degrees(fov[0]))
@@ -326,11 +330,38 @@ class VMDExporter:
     def __exportLampAnimation(self, lampObj):
         if lampObj is None:
             return None
+        if not MMDLamp.isMMDLamp(lampObj):
+            logging.warning('[WARNING] lamp "%s" is not MMDLamp', lampObj.name)
+            return None
+
+        lamp_rig = MMDLamp(lampObj)
+        mmd_lamp = lamp_rig.object()
+        lamp = lamp_rig.lamp()
 
         vmd_lamp_anim = vmd.LampAnimation()
 
-        #TODO
+        data = list(lamp.data.color) + list(lamp.location)
+        lamp_curves = [_FCurve(i) for i in data] # r, g, b, x, y, z
 
+        animation_data = lamp.data.animation_data
+        if animation_data and animation_data.action:
+            for fcurve in animation_data.action.fcurves:
+                if fcurve.data_path == 'color': # r, g, b
+                    lamp_curves[fcurve.array_index].setFCurve(fcurve)
+
+        animation_data = lamp.animation_data
+        if animation_data and animation_data.action:
+            for fcurve in animation_data.action.fcurves:
+                if fcurve.data_path == 'location': # x, y, z
+                    lamp_curves[3+fcurve.array_index].setFCurve(fcurve)
+
+        for frame_number, r, g, b, x, y, z in self.__allFrameKeys(lamp_curves):
+            key = vmd.LampKeyFrameKey()
+            key.frame_number = frame_number - self.__frame_start
+            key.color = [r[0], g[0], b[0]]
+            key.direction = [-x[0], -z[0], -y[0]]
+            vmd_lamp_anim.append(key)
+        logging.info('(lamp) frames:%5d  name: %s', len(vmd_lamp_anim), mmd_lamp.name)
         return vmd_lamp_anim
 
 
@@ -340,10 +371,15 @@ class VMDExporter:
         camera = args.get('camera', None)
         lamp = args.get('lamp', None)
         filepath = args.get('filepath', '')
-        model_scale = args.get('scale', None)
 
-        if model_scale:
-            self.__scale = 1.0/model_scale
+        self.__scale = args.get('scale', 1.0)
+
+        if args.get('use_frame_range', False):
+            self.__frame_start = bpy.context.scene.frame_start
+            self.__frame_end = bpy.context.scene.frame_end
+
+        if args.get('use_pose_mode', False):
+            self.__bone_converter_cls = vmd.importer.BoneConverterPoseMode
 
         if armature or mesh:
             vmdFile = vmd.File()

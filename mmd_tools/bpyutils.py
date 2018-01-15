@@ -8,6 +8,7 @@ class __EditMode:
             raise ValueError
         self.__prevMode = obj.mode
         self.__obj = obj
+        self.__obj_select = obj.select
         with select_object(obj) as act_obj:
             if obj.mode != 'EDIT':
                 bpy.ops.object.mode_set(mode='EDIT')
@@ -16,7 +17,10 @@ class __EditMode:
         return self.__obj.data
 
     def __exit__(self, type, value, traceback):
+        if self.__prevMode == 'EDIT':
+            bpy.ops.object.mode_set(mode='OBJECT') # update edited data
         bpy.ops.object.mode_set(mode=self.__prevMode)
+        self.__obj.select = self.__obj_select
 
 class __SelectObjects:
     def __init__(self, active_object, selected_objects=[]):
@@ -34,8 +38,11 @@ class __SelectObjects:
         self.__selected_objects = [active_object]+selected_objects
 
         self.__hides = []
+        active_layer = bpy.context.scene.active_layer
         for i in self.__selected_objects:
             self.__hides.append(i.hide)
+            i.layers[active_layer] = True
+            i.hide_select = False
             i.hide = False
             i.select = True
         bpy.context.scene.objects.active = active_object

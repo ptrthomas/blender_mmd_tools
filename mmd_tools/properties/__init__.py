@@ -1,8 +1,22 @@
 # -*- coding: utf-8 -*-
 
-import bpy
-
-from . import root, camera, material, bone, rigid_body
+if "bpy" in locals():
+    import importlib
+    importlib.reload(morph)
+    importlib.reload(root)
+    importlib.reload(camera)
+    importlib.reload(material)
+    importlib.reload(bone)
+    importlib.reload(rigid_body)
+else:
+    import bpy
+    from . import (
+        root,
+        camera,
+        material,
+        bone,
+        rigid_body,
+        )
 
 __properties = {
     bpy.types.Object: {
@@ -32,7 +46,6 @@ __properties = {
         'mmd_camera': bpy.props.PointerProperty(type=camera.MMDCamera),
         'mmd_rigid': bpy.props.PointerProperty(type=rigid_body.MMDRigidBody),
         'mmd_joint': bpy.props.PointerProperty(type=rigid_body.MMDJoint),
-        'is_mmd_lamp': bpy.props.BoolProperty(name='is_mmd_lamp', default=False),
         'is_mmd_glsl_light': bpy.props.BoolProperty(name='is_mmd_glsl_light', default=False),
         },
     bpy.types.Material: {
@@ -54,4 +67,3 @@ def unregister():
     for typ, t in __properties.items():
         for attr in t.keys():
             delattr(typ, attr)
-

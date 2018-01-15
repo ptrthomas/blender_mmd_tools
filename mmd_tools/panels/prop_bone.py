@@ -11,16 +11,13 @@ class MMDBonePanel(Panel):
 
     @classmethod
     def poll(cls, context):
-        return context.mode == 'EDIT_ARMATURE' and context.active_bone is not None or context.mode == 'POSE' and context.active_pose_bone is not None
+        return context.active_bone
 
     def draw(self, context):
-        if context.mode == 'EDIT_ARMATURE':
-            edit_bone = context.active_bone
-            pose_bone = context.active_object.pose.bones.get(edit_bone.name, None)
-            if pose_bone is None:
-                return
-        else:
-            pose_bone = context.active_pose_bone
+        pose_bone = context.active_pose_bone or \
+                    context.active_object.pose.bones.get(context.active_bone.name, None)
+        if pose_bone is None:
+            return
 
         layout = self.layout
         if pose_bone.is_mmd_shadow_bone:
@@ -40,11 +37,8 @@ class MMDBonePanel(Panel):
         row.prop(mmd_bone, 'transform_order')
         row.prop(mmd_bone, 'transform_after_dynamics')
         row = c.row()
-        row.prop(mmd_bone, 'is_visible')
         row.prop(mmd_bone, 'is_controllable')
-        row = c.row()
         row.prop(mmd_bone, 'is_tip')
-        #row.prop(mmd_bone, 'use_tail_location')
 
         c = layout.column(align=True)
         row = c.row()
@@ -58,7 +52,11 @@ class MMDBonePanel(Panel):
         row.column(align=True).prop(mmd_bone, 'fixed_axis', text='')
 
         c = layout.column(align=True)
-        c.prop(mmd_bone, 'enabled_local_axes')
+        row = c.row(align=True)
+        row.prop(mmd_bone, 'enabled_local_axes')
+        row.operator('mmd_tools.bone_local_axes_setup', text='', icon='X').type = 'DISABLE'
+        row.operator('mmd_tools.bone_local_axes_setup', text='Load').type = 'LOAD'
+        row.operator('mmd_tools.bone_local_axes_setup', text='Apply').type = 'APPLY'
         row = c.row()
         row.active = mmd_bone.enabled_local_axes
         row.column(align=True).prop(mmd_bone, 'local_axis_x')
@@ -74,16 +72,13 @@ class MMDBoneATPanel(Panel):
 
     @classmethod
     def poll(cls, context):
-        return context.mode == 'EDIT_ARMATURE' and context.active_bone is not None or context.mode == 'POSE' and context.active_pose_bone is not None
+        return context.active_bone
 
     def draw(self, context):
-        if context.mode == 'EDIT_ARMATURE':
-            edit_bone = context.active_bone
-            pose_bone = context.active_object.pose.bones.get(edit_bone.name, None)
-            if pose_bone is None:
-                return
-        else:
-            pose_bone = context.active_pose_bone
+        pose_bone = context.active_pose_bone or \
+                    context.active_object.pose.bones.get(context.active_bone.name, None)
+        if pose_bone is None:
+            return
 
         layout = self.layout
         if pose_bone.is_mmd_shadow_bone:

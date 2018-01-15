@@ -14,15 +14,7 @@ class MMDModelObjectDisplayPanel(_PanelBase, Panel):
 
     @classmethod
     def poll(cls, context):
-        obj = context.active_object
-        if obj is None:
-            return False
-
-        root = mmd_model.Model.findRoot(obj)
-        if root is None:
-            return False
-
-        return True
+        return mmd_model.Model.findRoot(context.active_object)
 
     def draw(self, context):
         layout = self.layout
@@ -34,11 +26,12 @@ class MMDModelObjectDisplayPanel(_PanelBase, Panel):
         c = row.column(align=True)
         c.prop(root.mmd_root, 'show_meshes', text='Mesh')
         c.prop(root.mmd_root, 'show_armature', text='Armature')
-        c.prop(root.mmd_root, 'show_rigid_bodies', text='Rigidbody')
+        c.prop(root.mmd_root, 'show_rigid_bodies', text='Rigid Body')
         c.prop(root.mmd_root, 'show_joints', text='Joint')
         c = row.column(align=True)
         c.prop(root.mmd_root, 'show_temporary_objects', text='Temporary Object')
-        c.prop(root.mmd_root, 'show_names_of_rigid_bodies', text='Rigidbody Name')
+        c.label() # for alignment only
+        c.prop(root.mmd_root, 'show_names_of_rigid_bodies', text='Rigid Body Name')
         c.prop(root.mmd_root, 'show_names_of_joints', text='Joint Name')
 
         if context.scene.render.engine in {'BLENDER_RENDER', 'BLENDER_GAME'}:

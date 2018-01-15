@@ -2,8 +2,8 @@
 
 import bpy
 from bpy.types import PoseBone
-import mathutils
 
+from mathutils import Vector
 from mmd_tools import bpyutils
 
 
@@ -55,6 +55,61 @@ class FnBone(object):
 
     pose_bone = property(__get_pose_bone, __set_pose_bone)
 
+
+    @staticmethod
+    def get_selected_pose_bones(armature):
+        if armature.mode == 'EDIT':
+            with bpyutils.select_object(armature): # update selected bones
+                bpy.ops.object.mode_set(mode='EDIT') # back to edit mode
+        context_selected_bones = bpy.context.selected_pose_bones or bpy.context.selected_bones or []
+        bones = armature.pose.bones
+        return (bones[b.name] for b in context_selected_bones if not bones[b.name].is_mmd_shadow_bone)
+
+    @classmethod
+    def load_bone_local_axes(cls, armature, enable=True):
+        for b in cls.get_selected_pose_bones(armature):
+            mmd_bone = b.mmd_bone
+            mmd_bone.enabled_local_axes = enable
+            if enable:
+                axes = b.bone.matrix_local.to_3x3().transposed()
+                mmd_bone.local_axis_x = axes[0].xzy
+                mmd_bone.local_axis_z = axes[2].xzy
+
+    @classmethod
+    def apply_bone_local_axes(cls, armature):
+        bone_map = {}
+        for b in armature.pose.bones:
+            if b.is_mmd_shadow_bone or not b.mmd_bone.enabled_local_axes:
+                continue
+            mmd_bone = b.mmd_bone
+            if mmd_bone.has_additional_rotation or mmd_bone.has_additional_location:
+                mmd_bone.is_additional_transform_dirty = True
+            bone_map[b.name] = (mmd_bone.local_axis_x, mmd_bone.local_axis_z)
+
+        with bpyutils.edit_object(armature) as data:
+            for bone in data.edit_bones:
+                if bone.name not in bone_map:
+                    bone.select = False
+                    continue
+                local_axis_x, local_axis_z = bone_map[bone.name]
+                cls.update_bone_roll(bone, local_axis_x, local_axis_z)
+                bone.select = True
+
+    @classmethod
+    def update_bone_roll(cls, edit_bone, mmd_local_axis_x, mmd_local_axis_z):
+        axes = cls.get_axes(mmd_local_axis_x, mmd_local_axis_z)
+        idx, val = max([(i, edit_bone.vector.dot(v)) for i, v in enumerate(axes)], key=lambda x: abs(x[1]))
+        edit_bone.align_roll(axes[(idx-1)%3 if val < 0 else (idx+1)%3])
+
+    @staticmethod
+    def get_axes(mmd_local_axis_x, mmd_local_axis_z):
+        x_axis = Vector(mmd_local_axis_x).normalized().xzy
+        z_axis = Vector(mmd_local_axis_z).normalized().xzy
+        y_axis = z_axis.cross(x_axis)
+        z_axis = x_axis.cross(y_axis) # correction
+        return (x_axis, y_axis, z_axis)
+
+
     @classmethod
     def clean_additional_transformation(cls, armature):
         # clean shadow bones
@@ -96,14 +151,10 @@ class FnBone(object):
                 shadow_bone_pool.append(sb)
 
         # setup shadow bones
-        need_mode_change = armature.mode == 'EDIT'
         with bpyutils.edit_object(armature) as data:
             edit_bones = data.edit_bones
             for sb in shadow_bone_pool:
                 sb.update_edit_bones(edit_bones)
-
-            if need_mode_change:
-                bpy.ops.object.mode_set(mode='OBJECT')
 
         pose_bones = armature.pose.bones
         for sb in shadow_bone_pool:
@@ -119,7 +170,7 @@ class FnBone(object):
         mmd_bone = p_bone.mmd_bone
         influence = mmd_bone.additional_transform_influence
         target_bone = mmd_bone.additional_transform_bone
-        mute_rotation = not mmd_bone.has_additional_rotation
+        mute_rotation = not mmd_bone.has_additional_rotation #or p_bone.is_in_ik_chain
         mute_location = not mmd_bone.has_additional_location
 
         constraints = p_bone.constraints
@@ -130,53 +181,60 @@ class FnBone(object):
                 return _AT_ShadowBoneRemove(bone_name)
             return None
 
-        invert = influence < 0
-        influence = abs(influence)
         shadow_bone = _AT_ShadowBoneCreate(bone_name, target_bone)
 
-        c = constraints.get('mmd_additional_rotation', None)
-        if mute_rotation:
-            if c:
-                constraints.remove(c)
-        else:
-            if c and c.type != 'COPY_ROTATION':
-                constraints.remove(c)
-                c = None
-            if c is None:
-                c = constraints.new('COPY_ROTATION')
-                c.name = 'mmd_additional_rotation'
-            c.use_offset = True
-            c.influence = influence
-            c.target = p_bone.id_data
-            c.target_space = 'LOCAL'
-            c.owner_space = 'LOCAL'
-            c.invert_x = invert
-            c.invert_y = invert
-            c.invert_z = invert
-            shadow_bone.add_constraint(c)
+        def __config(name, mute, map_type):
+            from math import pi
+            c = constraints.get(name, None)
+            if mute:
+                if c:
+                    constraints.remove(c)
+            else:
+                if c and c.type != 'TRANSFORM':
+                    constraints.remove(c)
+                    c = None
+                if c is None:
+                    c = constraints.new('TRANSFORM')
+                    c.name = name
+                c.influence = 1
+                c.target = p_bone.id_data
+                c.target_space = 'LOCAL'
+                c.owner_space = 'LOCAL'
+                c.use_motion_extrapolate = True
+                c.map_to_x_from = 'X'
+                c.map_to_y_from = 'Y'
+                c.map_to_z_from = 'Z'
+                c.map_from = map_type
+                c.map_to = map_type
+                if map_type == 'ROTATION':
+                    c.from_min_x_rot = c.from_min_y_rot = c.from_min_z_rot = -pi
+                    c.from_max_x_rot = c.from_max_y_rot = c.from_max_z_rot = pi
+                    c.to_min_x_rot = c.to_min_y_rot = c.to_min_z_rot = c.from_min_x_rot * influence
+                    c.to_max_x_rot = c.to_max_y_rot = c.to_max_z_rot = c.from_max_x_rot * influence
+                elif map_type == 'LOCATION':
+                    c.from_min_x = c.from_min_y = c.from_min_z = -100
+                    c.from_max_x = c.from_max_y = c.from_max_z = 100
+                    c.to_min_x = c.to_min_y = c.to_min_z = c.from_min_x * influence
+                    c.to_max_x = c.to_max_y = c.to_max_z = c.from_max_x * influence
+                shadow_bone.add_constraint(c)
 
-        c = constraints.get('mmd_additional_location', None)
-        if mute_location:
-            if c:
-                constraints.remove(c)
-        else:
-            if c and c.type != 'COPY_LOCATION':
-                constraints.remove(c)
-                c = None
-            if c is None:
-                c = constraints.new('COPY_LOCATION')
-                c.name = 'mmd_additional_location'
-            c.use_offset = True
-            c.influence = influence
-            c.target = p_bone.id_data
-            c.target_space = 'LOCAL'
-            c.owner_space = 'LOCAL'
-            c.invert_x = invert
-            c.invert_y = invert
-            c.invert_z = invert
-            shadow_bone.add_constraint(c)
+        __config('mmd_additional_rotation', mute_rotation, 'ROTATION')
+        __config('mmd_additional_location', mute_location, 'LOCATION')
 
         return shadow_bone
+
+    def update_additional_transform_influence(self):
+        p_bone = self.__bone
+        influence = p_bone.mmd_bone.additional_transform_influence
+        constraints = p_bone.constraints
+        c = constraints.get('mmd_additional_rotation', None)
+        if c:
+            c.to_min_x_rot = c.to_min_y_rot = c.to_min_z_rot = c.from_min_x_rot * influence
+            c.to_max_x_rot = c.to_max_y_rot = c.to_max_z_rot = c.from_max_x_rot * influence
+        c = constraints.get('mmd_additional_location', None)
+        if c:
+            c.to_min_x = c.to_min_y = c.to_min_z = c.from_min_x * influence
+            c.to_max_x = c.to_max_y = c.to_max_z = c.from_max_x * influence
 
 
 class _AT_ShadowBoneRemove:
@@ -197,8 +255,11 @@ class _AT_ShadowBoneCreate:
         self.__target_bone_name = target_bone_name
         self.__constraint_pool = []
 
-    def __update_constraints(self):
-        subtarget = self.__shadow_bone_name
+    def __is_well_aligned(self, bone0, bone1):
+        return bone0.x_axis.dot(bone1.x_axis) > 0.99 and bone0.y_axis.dot(bone1.y_axis) > 0.99
+
+    def __update_constraints(self, use_shadow=True):
+        subtarget = self.__shadow_bone_name if use_shadow else self.__target_bone_name
         for c in self.__constraint_pool:
             c.subtarget = subtarget
 
@@ -208,6 +269,9 @@ class _AT_ShadowBoneCreate:
     def update_edit_bones(self, edit_bones):
         bone = edit_bones[self.__bone_name]
         target_bone = edit_bones[self.__target_bone_name]
+        if bone != target_bone and self.__is_well_aligned(bone, target_bone):
+            _AT_ShadowBoneRemove(self.__bone_name).update_edit_bones(edit_bones)
+            return
 
         dummy_bone_name = self.__dummy_bone_name
         dummy = edit_bones.get(dummy_bone_name, None)
@@ -218,7 +282,7 @@ class _AT_ShadowBoneCreate:
         dummy.parent = target_bone
         dummy.head = target_bone.head
         dummy.tail = dummy.head + bone.tail - bone.head
-        dummy.align_roll(bone.z_axis)
+        dummy.roll = bone.roll
 
         shadow_bone_name = self.__shadow_bone_name
         shadow = edit_bones.get(shadow_bone_name, None)
@@ -229,9 +293,13 @@ class _AT_ShadowBoneCreate:
         shadow.parent = target_bone.parent
         shadow.head = dummy.head
         shadow.tail = dummy.tail
-        shadow.align_roll(bone.z_axis)
+        shadow.roll = bone.roll
 
     def update_pose_bones(self, pose_bones):
+        if self.__shadow_bone_name not in pose_bones:
+            self.__update_constraints(use_shadow=False)
+            return
+
         dummy_p_bone = pose_bones[self.__dummy_bone_name]
         dummy_p_bone.is_mmd_shadow_bone = True
         dummy_p_bone.mmd_shadow_bone_type = 'DUMMY'
