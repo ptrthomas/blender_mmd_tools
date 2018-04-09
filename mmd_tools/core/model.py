@@ -6,6 +6,7 @@ import mathutils
 from mmd_tools import bpyutils
 from mmd_tools.core import rigid_body
 from mmd_tools.core.bone import FnBone
+from mmd_tools.core.morph import FnMorph
 
 import logging
 import time
@@ -88,12 +89,13 @@ class Model:
         armObj.draw_type = 'WIRE'
 
         if add_root_bone:
+            bone_name = u'全ての親'
             with bpyutils.edit_object(armObj) as data:
-                bone = data.edit_bones.new(name=u'全ての親')
+                bone = data.edit_bones.new(name=bone_name)
                 bone.head = [0.0, 0.0, 0.0]
                 bone.tail = [0.0, 0.0, root.empty_draw_size]
-            armObj.pose.bones[bone.name].mmd_bone.name_j = u'全ての親'
-            armObj.pose.bones[bone.name].mmd_bone.name_e = 'Root'
+            armObj.pose.bones[bone_name].mmd_bone.name_j = bone_name
+            armObj.pose.bones[bone_name].mmd_bone.name_e = 'Root'
 
         scene.objects.active = root
         root.select = True
@@ -113,16 +115,12 @@ class Model:
             self.__root.mmd_root.active_display_item_frame = 0
             frames.clear()
 
-        frame_root = frames.get('Root', None)
-        if frame_root is None:
-            frame_root = frames.add()
+        frame_root = frames.get('Root', None) or frames.add()
         frame_root.name = 'Root'
         frame_root.name_e = 'Root'
         frame_root.is_special = True
 
-        frame_facial = frames.get(u'表情', None)
-        if frame_facial is None:
-            frame_facial = frames.add()
+        frame_facial = frames.get(u'表情', None) or frames.add()
         frame_facial.name = u'表情'
         frame_facial.name_e = 'Facial'
         frame_facial.is_special = True
@@ -136,6 +134,13 @@ class Model:
         if not reset:
             frames.move(frames.find('Root'), 0)
             frames.move(frames.find(u'表情'), 1)
+
+    @property
+    def morph_slider(self):
+        return FnMorph.get_morph_slider(self)
+
+    def loadMorphs(self):
+        FnMorph.load_morphs(self)
 
     def createRigidBodyPool(self, counts):
         if counts < 1:

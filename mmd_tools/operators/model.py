@@ -9,6 +9,36 @@ from mmd_tools.translations import DictionaryEnum
 import mmd_tools.core.model as mmd_model
 
 
+class MorphSliderSetup(Operator):
+    bl_idname = 'mmd_tools.morph_slider_setup'
+    bl_label = 'Morph Slider Setup'
+    bl_description = 'Translate MMD morphs of selected object into format usable by Blender'
+    bl_options = {'INTERNAL'}
+
+    type = bpy.props.EnumProperty(
+        name='Type',
+        description='Select type',
+        items = [
+            ('CREATE', 'Create', 'Create placeholder object for morph sliders', 'SHAPEKEY_DATA', 0),
+            ('BIND', 'Bind', 'Bind morph sliders', 'DRIVER', 1),
+            ('UNBIND', 'Unbind', 'Unbind morph sliders', 'X', 2),
+            ],
+        default='CREATE',
+        )
+
+    def execute(self, context):
+        obj = context.active_object
+        root = mmd_model.Model.findRoot(context.active_object)
+        rig = mmd_model.Model(root)
+        if self.type == 'BIND':
+            rig.morph_slider.bind()
+        elif self.type == 'UNBIND':
+            rig.morph_slider.unbind()
+        else:
+            rig.morph_slider.create()
+        context.scene.objects.active = obj
+        return {'FINISHED'}
+
 class CleanRiggingObjects(Operator):
     bl_idname = 'mmd_tools.clean_rig'
     bl_label = 'Clean Rig'
@@ -128,11 +158,36 @@ class ConvertToMMDModel(Operator):
     bl_idname = 'mmd_tools.convert_to_mmd_model'
     bl_label = 'Convert to a MMD Model'
     bl_description = 'Convert active armature with its meshes to a MMD model (experimental)'
+    bl_options = {'REGISTER', 'UNDO'}
+
+    ambient_color_source = bpy.props.EnumProperty(
+        name='Ambient Color Source',
+        description='Select ambient color source',
+        items = [
+            ('DIFFUSE', 'Diffuse', 'Diffuse color', 0),
+            ('MIRROR', 'Mirror', 'Mirror color', 1),
+            ],
+        default='DIFFUSE',
+        )
+
+    edge_threshold = bpy.props.FloatProperty(
+        name='Edge Threshold',
+        description='MMD toon edge will not be enabled if freestyle line color alpha less than this value',
+        min=0,
+        max=1,
+        precision=3,
+        step=0.1,
+        default=0.1,
+        )
 
     @classmethod
     def poll(cls, context):
         obj = context.active_object
         return obj and obj.type == 'ARMATURE' and obj.mode != 'EDIT'
+
+    def invoke(self, context, event):
+        vm = context.window_manager
+        return vm.invoke_props_dialog(self)
 
     def execute(self, context):
         #TODO convert some basic MMD properties
@@ -179,6 +234,8 @@ class ConvertToMMDModel(Operator):
         armature = rig.armature()
         meshes = tuple(rig.meshes())
 
+        rig.loadMorphs()
+
         vertex_groups = {g.name for mesh in meshes for g in mesh.vertex_groups}
         for pose_bone in armature.pose.bones:
             if not pose_bone.parent:
@@ -187,38 +244,29 @@ class ConvertToMMDModel(Operator):
                 continue
             pose_bone.lock_location = (True, True, True)
 
-        vertex_morphs = root.mmd_root.vertex_morphs
-        for obj in meshes:
-            shape_keys = obj.data.shape_keys
-            if shape_keys:
-                for kb in shape_keys.key_blocks[1:]:
-                    if not kb.name.startswith('mmd_') and kb.name not in vertex_morphs:
-                        item = vertex_morphs.add()
-                        item.name = kb.name
-                        item.name_e = kb.name
-                        name_lower = item.name.lower()
-                        if 'mouth' in name_lower:
-                            item.category = 'MOUTH'
-                        elif 'eye' in name_lower:
-                            if 'brow' in name_lower:
-                                item.category = 'EYEBROW'
-                            else:
-                                item.category = 'EYE'
-
         for m in {x for mesh in meshes for x in mesh.data.materials if x}:
             mmd_material = m.mmd_material
 
             diffuse = m.diffuse_color[:]
             mmd_material.diffuse_color = diffuse
-            mmd_material.ambient_color = [0.5*c for c in diffuse]
+            if self.ambient_color_source == 'MIRROR':
+                mmd_material.ambient_color = m.mirror_color
+            else:
+                mmd_material.ambient_color = [0.5*c for c in diffuse]
             mmd_material.alpha = m.alpha
             mmd_material.specular_color = m.specular_color
             mmd_material.shininess = m.specular_hardness
             mmd_material.is_double_sided = m.game_settings.use_backface_culling
             mmd_material.enabled_self_shadow_map = m.use_cast_buffer_shadows and m.alpha > 1e-3
             mmd_material.enabled_self_shadow = m.use_shadows
-            mmd_material.edge_color = m.line_color
-            mmd_material.enabled_toon_edge = m.line_color[3] > 1e-3
+            if hasattr(m, 'line_color'): # freestyle line color
+                line_color = list(m.line_color)
+                if line_color[3] < self.edge_threshold:
+                    mmd_material.enabled_toon_edge = False
+                    mmd_material.edge_color[:3] = line_color[:3] # skip alpha
+                else:
+                    mmd_material.enabled_toon_edge = True
+                    mmd_material.edge_color = line_color
 
         from mmd_tools.operators.display_item import DisplayItemQuickSetup
         DisplayItemQuickSetup.load_bone_groups(root.mmd_root, armature)
