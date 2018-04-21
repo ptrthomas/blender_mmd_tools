@@ -3,8 +3,10 @@
 import bpy
 from bpy.types import PoseBone
 
+from math import pi
 from mathutils import Vector
 from mmd_tools import bpyutils
+from mmd_tools.bpyutils import TransformConstraintOp
 
 
 def remove_constraint(constraints, name):
@@ -183,43 +185,17 @@ class FnBone(object):
 
         shadow_bone = _AT_ShadowBoneCreate(bone_name, target_bone)
 
-        def __config(name, mute, map_type):
-            from math import pi
-            c = constraints.get(name, None)
+        def __config(name, mute, map_type, value):
             if mute:
-                if c:
-                    constraints.remove(c)
-            else:
-                if c and c.type != 'TRANSFORM':
-                    constraints.remove(c)
-                    c = None
-                if c is None:
-                    c = constraints.new('TRANSFORM')
-                    c.name = name
-                c.influence = 1
-                c.target = p_bone.id_data
-                c.target_space = 'LOCAL'
-                c.owner_space = 'LOCAL'
-                c.use_motion_extrapolate = True
-                c.map_to_x_from = 'X'
-                c.map_to_y_from = 'Y'
-                c.map_to_z_from = 'Z'
-                c.map_from = map_type
-                c.map_to = map_type
-                if map_type == 'ROTATION':
-                    c.from_min_x_rot = c.from_min_y_rot = c.from_min_z_rot = -pi
-                    c.from_max_x_rot = c.from_max_y_rot = c.from_max_z_rot = pi
-                    c.to_min_x_rot = c.to_min_y_rot = c.to_min_z_rot = c.from_min_x_rot * influence
-                    c.to_max_x_rot = c.to_max_y_rot = c.to_max_z_rot = c.from_max_x_rot * influence
-                elif map_type == 'LOCATION':
-                    c.from_min_x = c.from_min_y = c.from_min_z = -100
-                    c.from_max_x = c.from_max_y = c.from_max_z = 100
-                    c.to_min_x = c.to_min_y = c.to_min_z = c.from_min_x * influence
-                    c.to_max_x = c.to_max_y = c.to_max_z = c.from_max_x * influence
-                shadow_bone.add_constraint(c)
+                remove_constraint(constraints, name)
+                return
+            c = TransformConstraintOp.create(constraints, name, map_type)
+            c.target = p_bone.id_data
+            shadow_bone.add_constraint(c)
+            TransformConstraintOp.update_min_max(c, value, influence)
 
-        __config('mmd_additional_rotation', mute_rotation, 'ROTATION')
-        __config('mmd_additional_location', mute_location, 'LOCATION')
+        __config('mmd_additional_rotation', mute_rotation, 'ROTATION', pi)
+        __config('mmd_additional_location', mute_location, 'LOCATION', 100)
 
         return shadow_bone
 
@@ -228,13 +204,9 @@ class FnBone(object):
         influence = p_bone.mmd_bone.additional_transform_influence
         constraints = p_bone.constraints
         c = constraints.get('mmd_additional_rotation', None)
-        if c:
-            c.to_min_x_rot = c.to_min_y_rot = c.to_min_z_rot = c.from_min_x_rot * influence
-            c.to_max_x_rot = c.to_max_y_rot = c.to_max_z_rot = c.from_max_x_rot * influence
+        TransformConstraintOp.update_min_max(c, pi, influence)
         c = constraints.get('mmd_additional_location', None)
-        if c:
-            c.to_min_x = c.to_min_y = c.to_min_z = c.from_min_x * influence
-            c.to_max_x = c.to_max_y = c.to_max_z = c.from_max_x * influence
+        TransformConstraintOp.update_min_max(c, 100, influence)
 
 
 class _AT_ShadowBoneRemove:
