@@ -2,19 +2,18 @@
 
 from bpy.types import Panel, UIList
 
+from mmd_tools import register_wrap
 from mmd_tools.core.model import Model
 from mmd_tools.panels.tool import TRIA_UP_BAR, TRIA_DOWN_BAR
+from mmd_tools.panels.tool import draw_filter_wrap
+from mmd_tools.panels.tool import _PanelBase
 
-class _PanelBase(object):
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'TOOLS'
-    bl_category = 'mmd_utils'
-
+@register_wrap
 class UL_Materials(UIList):
 
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
-        if self.layout_type in {'DEFAULT'}:    
-            if item:        
+        if self.layout_type in {'DEFAULT'}:
+            if item:
                 row = layout.row(align=True)
                 item_prop = getattr(item, 'mmd_material')
                 row.prop(item_prop, 'name_j', text='', emboss=False, icon='MATERIAL')
@@ -27,20 +26,23 @@ class UL_Materials(UIList):
             layout.alignment = 'CENTER'
             layout.label(text="", icon_value=icon)
 
+    @draw_filter_wrap
     def draw_filter(self, context, layout):
         layout.label(text="Use the arrows to sort", icon='INFO')
 
+@register_wrap
 class MMDMaterialSorter(_PanelBase, Panel):
     bl_idname = 'OBJECT_PT_mmd_tools_material_sorter'
     bl_label = 'Material Sorter'
     bl_context = ''
+    bl_options = {'DEFAULT_CLOSED'}
 
     def draw(self, context):
         layout = self.layout
         active_obj = context.active_object
         if (active_obj is None or active_obj.type != 'MESH' or
             active_obj.mmd_type != 'NONE'):
-            layout.label("Select a mesh object")
+            layout.label(text='Select a mesh object')
             return
 
         col = layout.column(align=True)
@@ -49,14 +51,15 @@ class MMDMaterialSorter(_PanelBase, Panel):
                           active_obj.data, "materials",
                           active_obj, "active_material_index")
         tb = row.column()
-        tbl = tb.column(align=True)
-        tbl.operator('mmd_tools.move_material_up', text='', icon='TRIA_UP')
-        tbl.operator('mmd_tools.move_material_down', text='', icon='TRIA_DOWN')
+        tb1 = tb.column(align=True)
+        tb1.operator('mmd_tools.move_material_up', text='', icon='TRIA_UP')
+        tb1.operator('mmd_tools.move_material_down', text='', icon='TRIA_DOWN')
 
+@register_wrap
 class UL_ModelMeshes(UIList):
 
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
-        if self.layout_type in {'DEFAULT'}:           
+        if self.layout_type in {'DEFAULT'}:
             layout.label(text=item.name, translate=False, icon='OBJECT_DATA')
         elif self.layout_type in {'COMPACT'}:
             pass
@@ -64,6 +67,7 @@ class UL_ModelMeshes(UIList):
             layout.alignment = 'CENTER'
             layout.label(text="", icon_value=icon)
 
+    @draw_filter_wrap
     def draw_filter(self, context, layout):
         layout.label(text="Use the arrows to sort", icon='INFO')
 
@@ -93,18 +97,19 @@ class UL_ModelMeshes(UIList):
 
         return flt_flags, flt_neworder
 
-
+@register_wrap
 class MMDMeshSorter(_PanelBase, Panel):
     bl_idname = 'OBJECT_PT_mmd_tools_meshes_sorter'
     bl_label = 'Meshes Sorter'
     bl_context = ''
+    bl_options = {'DEFAULT_CLOSED'}
 
     def draw(self, context):
         layout = self.layout
         active_obj = context.active_object
         root = Model.findRoot(active_obj)
         if root is None:
-            layout.label("Select a MMD Model")
+            layout.label(text='Select a MMD Model')
             return
 
         col = layout.column(align=True)

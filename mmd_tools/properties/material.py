@@ -4,6 +4,7 @@ import bpy
 from bpy.types import PropertyGroup
 from bpy.props import BoolProperty, EnumProperty, FloatProperty, FloatVectorProperty, IntProperty, StringProperty
 
+from mmd_tools import register_wrap
 from mmd_tools.core import material
 from mmd_tools.core.material import FnMaterial
 from mmd_tools.core.model import Model
@@ -29,7 +30,7 @@ def _updateIsDoubleSided(prop, context):
     FnMaterial(prop.id_data).update_is_double_sided()
 
 def _updateSphereMapType(prop, context):
-    FnMaterial(prop.id_data).update_sphere_texture_type()
+    FnMaterial(prop.id_data).update_sphere_texture_type(context.active_object)
 
 def _updateToonTexture(prop, context):
     FnMaterial(prop.id_data).update_toon_texture()
@@ -71,6 +72,7 @@ def _setNameJ(prop, value):
 #===========================================
 # Property classes
 #===========================================
+@register_wrap
 class MMDMaterial(PropertyGroup):
     """ マテリアル
     """
@@ -139,7 +141,7 @@ class MMDMaterial(PropertyGroup):
         max=1,
         precision=3,
         step=0.1,
-        default=[1.0, 1.0, 1.0],
+        default=[0.625, 0.625, 0.625],
         update=_updateSpecularColor,
         )
 
@@ -208,7 +210,7 @@ class MMDMaterial(PropertyGroup):
         max=100,
         soft_max=2,
         step=1.0,
-        default=0.5,
+        default=1.0,
         update=_updateEdgeWeight,
         )
 

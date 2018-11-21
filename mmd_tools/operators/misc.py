@@ -5,18 +5,21 @@ import re
 import bpy
 from bpy.types import Operator
 
+from mmd_tools import register_wrap
 from mmd_tools import utils
 from mmd_tools.bpyutils import ObjectOp
 from mmd_tools.core import model as mmd_model
 from mmd_tools.core.morph import FnMorph
 from mmd_tools.core.material import FnMaterial
+from mmd_tools.core.bone import FnBone
 
 
+@register_wrap
 class MoveObject(Operator, utils.ItemMoveOp):
     bl_idname = 'mmd_tools.object_move'
     bl_label = 'Move Object'
     bl_description = 'Move active object up/down in the list'
-    bl_options = {'INTERNAL'}
+    bl_options = {'REGISTER', 'UNDO', 'INTERNAL'}
 
     __PREFIX_REGEXP = re.compile(r'(?P<prefix>[0-9A-Z]{3}_)(?P<name>.*)')
 
@@ -72,11 +75,12 @@ class MoveObject(Operator, utils.ItemMoveOp):
                 objects = rig.joints()
         return __MovableList(objects)
 
+@register_wrap
 class CleanShapeKeys(Operator):
     bl_idname = 'mmd_tools.clean_shape_keys'
     bl_label = 'Clean Shape Keys'
     bl_description = 'Remove unused shape keys of selected mesh objects'
-    bl_options = {'PRESET'}
+    bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
     def poll(cls, context):
@@ -107,17 +111,17 @@ class CleanShapeKeys(Operator):
             self.__shape_key_clean(ObjectOp(ob), ob.data.shape_keys.key_blocks)
         return {'FINISHED'}
 
+@register_wrap
 class SeparateByMaterials(Operator):
     bl_idname = 'mmd_tools.separate_by_materials'
-    bl_label = 'Separate by materials'
+    bl_label = 'Separate by Materials'
     bl_description = 'Separate by materials'
-    bl_options = {'PRESET'}
+    bl_options = {'REGISTER', 'UNDO'}
 
     clean_shape_keys = bpy.props.BoolProperty(
         name='Clean Shape Keys',
         description='Remove unused shape keys of separated objects',
         default=True,
-        options={'SKIP_SAVE'},
         )
 
     @classmethod
@@ -143,6 +147,7 @@ class SeparateByMaterials(Operator):
             # The material morphs store the name of the mesh, not of the object.
             # So they will not be out of sync
             for mesh in rig.meshes():
+                FnMorph.clean_uv_morph_vertex_groups(mesh)
                 if len(mesh.data.materials) > 0:
                     mat = mesh.data.materials[0]
                     idx = mat_names.index(getattr(mat, 'name', None))
@@ -155,17 +160,24 @@ class SeparateByMaterials(Operator):
         utils.clearUnusedMeshes()
         return {'FINISHED'}
 
+@register_wrap
 class JoinMeshes(Operator):
     bl_idname = 'mmd_tools.join_meshes'
     bl_label = 'Join Meshes'
     bl_description = 'Join the Model meshes into a single one'
-    bl_options = {'PRESET'}
+    bl_options = {'REGISTER', 'UNDO'}
+
+    sort_shape_keys = bpy.props.BoolProperty(
+        name='Sort Shape Keys',
+        description='Sort shape keys in the order of vertex morph',
+        default=True,
+        )
 
     def execute(self, context):
         obj = context.active_object
         root = mmd_model.Model.findRoot(obj)
         if root is None:
-            self.report({ 'ERROR' }, 'Select a MMD model') 
+            self.report({ 'ERROR' }, 'Select a MMD model')
             return { 'CANCELLED' }
 
         if root:
@@ -176,6 +188,7 @@ class JoinMeshes(Operator):
         rig = mmd_model.Model(root)
         meshes_list = sorted(rig.meshes(), key=lambda x: x.name)
         if not meshes_list:
+            self.report({ 'ERROR' }, 'The model does not have any meshes')
             return { 'CANCELLED' }
         active_mesh = meshes_list[0]
 
@@ -188,16 +201,12 @@ class JoinMeshes(Operator):
                 if getattr(mat, 'name', None) not in active_mesh.data.materials[:]:
                     active_mesh.data.materials.append(mat)
 
-        # Store the current order of shape keys (vertex morphs)
-        from collections import OrderedDict
-        __get_key_blocks = lambda x: x.data.shape_keys.key_blocks if x.data.shape_keys else []
-        shape_key_names = OrderedDict((kb.name, None) for m in meshes_list for kb in __get_key_blocks(m))
-        shape_key_names = sorted(shape_key_names.keys(), key=lambda x: root.mmd_root.vertex_morphs.find(x))
-        FnMorph.storeShapeKeyOrder(active_mesh, shape_key_names)
-        active_mesh.active_shape_key_index = 0
-
         # Join selected meshes
         bpy.ops.object.join()
+
+        if self.sort_shape_keys:
+            FnMorph.fixShapeKeyOrder(active_mesh, root.mmd_root.vertex_morphs.keys())
+            active_mesh.active_shape_key_index = 0
 
         if len(root.mmd_root.material_morphs) > 0:
             for morph in root.mmd_root.material_morphs:
@@ -207,11 +216,12 @@ class JoinMeshes(Operator):
         utils.clearUnusedMeshes()
         return { 'FINISHED' }
 
+@register_wrap
 class AttachMeshesToMMD(Operator):
     bl_idname = 'mmd_tools.attach_meshes'
     bl_label = 'Attach Meshes to Model'
     bl_description = 'Finds existing meshes and attaches them to the selected MMD model'
-    bl_options = {'PRESET'}
+    bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
         root = mmd_model.Model.findRoot(context.active_object)
@@ -242,11 +252,12 @@ class AttachMeshesToMMD(Operator):
             mesh.matrix_world = m
         return { 'FINISHED' }
 
+@register_wrap
 class ChangeMMDIKLoopFactor(Operator):
     bl_idname = 'mmd_tools.change_mmd_ik_loop_factor'
     bl_label = 'Change MMD IK Loop Factor'
     bl_description = "Multiplier for all bones' IK iterations in Blender"
-    bl_options = {'PRESET'}
+    bl_options = {'REGISTER', 'UNDO'}
 
     mmd_ik_loop_factor = bpy.props.IntProperty(
         name='MMD IK Loop Factor',
@@ -294,3 +305,29 @@ class ChangeMMDIKLoopFactor(Operator):
                 c.iterations = iterations
         return { 'FINISHED' }
 
+@register_wrap
+class RecalculateBoneRoll(Operator):
+    bl_idname = 'mmd_tools.recalculate_bone_roll'
+    bl_label = 'Recalculate bone roll'
+    bl_description = 'Recalculate bone roll for arm related bones'
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj and obj.type == 'ARMATURE'
+
+    def invoke(self, context, event):
+        vm = context.window_manager
+        return vm.invoke_props_dialog(self)
+
+    def draw(self, context):
+        layout = self.layout
+        c = layout.column()
+        c.label(text='This operation will break existing f-curve/action.', icon='QUESTION')
+        c.label(text='Click [OK] to run the operation.')
+
+    def execute(self, context):
+        arm = context.active_object
+        FnBone.apply_auto_bone_roll(arm)
+        return { 'FINISHED' }

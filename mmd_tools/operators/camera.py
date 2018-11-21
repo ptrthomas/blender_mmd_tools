@@ -5,12 +5,15 @@ from bpy.props import BoolProperty
 from bpy.props import EnumProperty
 from bpy.types import Operator
 
+from mmd_tools import register_wrap
 from mmd_tools.core.camera import MMDCamera
 
+@register_wrap
 class ConvertToMMDCamera(Operator):
     bl_idname = 'mmd_tools.convert_to_mmd_camera'
     bl_label = 'Convert to MMD Camera'
     bl_description = 'Create a camera rig for MMD'
+    bl_options = {'REGISTER', 'UNDO'}
 
     scale = FloatProperty(
         name='Scale',

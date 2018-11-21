@@ -7,19 +7,20 @@ from mmd_tools import bpyutils
 from mmd_tools.core import rigid_body
 from mmd_tools.core.bone import FnBone
 from mmd_tools.core.morph import FnMorph
+from mmd_tools.bpyutils import matmul
 
 import logging
 import time
 
 
 def isRigidBodyObject(obj):
-    return obj.mmd_type == 'RIGID_BODY'
+    return obj and obj.mmd_type == 'RIGID_BODY'
 
 def isJointObject(obj):
-    return obj.mmd_type == 'JOINT'
+    return obj and obj.mmd_type == 'JOINT'
 
 def isTemporaryObject(obj):
-    return obj.mmd_type in ['TRACK_TARGET', 'NON_COLLISION_CONSTRAINT', 'SPRING_CONSTRAINT', 'SPRING_GOAL']
+    return obj and obj.mmd_type in {'TRACK_TARGET', 'NON_COLLISION_CONSTRAINT', 'SPRING_CONSTRAINT', 'SPRING_GOAL'}
 
 
 def getRigidBodySize(obj):
@@ -97,8 +98,7 @@ class Model:
             armObj.pose.bones[bone_name].mmd_bone.name_j = bone_name
             armObj.pose.bones[bone_name].mmd_bone.name_e = 'Root'
 
-        scene.objects.active = root
-        root.select = True
+        bpyutils.select_object(root)
         return Model(root)
 
     @classmethod
@@ -126,8 +126,8 @@ class Model:
         frame_facial.is_special = True
 
         arm = self.armature()
-        if arm and len(arm.data.bones) and len(frame_root.items) < 1:
-            item = frame_root.items.add()
+        if arm and len(arm.data.bones) and len(frame_root.data) < 1:
+            item = frame_root.data.add()
             item.type = 'BONE'
             item.name = arm.data.bones[0].name
 
@@ -207,7 +207,7 @@ class Model:
 
         obj.mmd_rigid.shape = rigid_body.collisionShape(shape_type)
         obj.mmd_rigid.size = size
-        obj.mmd_rigid.type = str(dynamics_type)
+        obj.mmd_rigid.type = str(dynamics_type) if dynamics_type in range(3) else '1'
 
         if collision_group_number is not None:
             obj.mmd_rigid.collision_group_number = collision_group_number
@@ -525,7 +525,7 @@ class Model:
 
         mmd_root = self.rootObject().mmd_root
         for frame in mmd_root.display_item_frames:
-            for item in frame.items:
+            for item in frame.data:
                 if item.type == 'BONE' and item.name == old_bone_name:
                     item.name = new_bone_name
         for mesh in self.meshes():
@@ -733,37 +733,37 @@ class Model:
             target_bone = arm.pose.bones[bone_name]
 
             if rigid_type == rigid_body.MODE_STATIC:
-                m = target_bone.matrix * target_bone.bone.matrix_local.inverted()
+                m = matmul(target_bone.matrix, target_bone.bone.matrix_local.inverted())
                 self.__rigid_body_matrix_map[rigid_obj] = m
                 orig_scale = rigid_obj.scale.copy()
-                to_matrix_world = rigid_obj.matrix_world * rigid_obj.matrix_local.inverted()
-                matrix_world = to_matrix_world * (m * rigid_obj.matrix_local)
+                to_matrix_world = matmul(rigid_obj.matrix_world, rigid_obj.matrix_local.inverted())
+                matrix_world = matmul(to_matrix_world, matmul(m, rigid_obj.matrix_local))
                 rigid_obj.parent = arm
                 rigid_obj.parent_type = 'BONE'
                 rigid_obj.parent_bone = bone_name
                 rigid_obj.matrix_world = matrix_world
                 rigid_obj.scale = orig_scale
                 #relation.mute = False
-                #relation.inverse_matrix = (arm.matrix_world * target_bone.bone.matrix_local).inverted()
+                #relation.inverse_matrix = matmul(arm.matrix_world, target_bone.bone.matrix_local).inverted()
                 fake_children = self.__fake_parent_map.get(rigid_obj, None)
                 if fake_children:
                     for fake_child in fake_children:
                         logging.debug('          - fake_child: %s', fake_child.name)
-                        t, r, s = (m * fake_child.matrix_local).decompose()
+                        t, r, s = matmul(m, fake_child.matrix_local).decompose()
                         fake_child.location = t
                         fake_child.rotation_euler = r.to_euler(fake_child.rotation_mode)
 
             elif rigid_type in [rigid_body.MODE_DYNAMIC, rigid_body.MODE_DYNAMIC_BONE]:
-                m = target_bone.matrix * target_bone.bone.matrix_local.inverted()
+                m = matmul(target_bone.matrix, target_bone.bone.matrix_local.inverted())
                 self.__rigid_body_matrix_map[rigid_obj] = m
-                t, r, s = (m * rigid_obj.matrix_local).decompose()
+                t, r, s = matmul(m, rigid_obj.matrix_local).decompose()
                 rigid_obj.location = t
                 rigid_obj.rotation_euler = r.to_euler(rigid_obj.rotation_mode)
                 fake_children = self.__fake_parent_map.get(rigid_obj, None)
                 if fake_children:
                     for fake_child in fake_children:
                         logging.debug('          - fake_child: %s', fake_child.name)
-                        t, r, s = (m * fake_child.matrix_local).decompose()
+                        t, r, s = matmul(m, fake_child.matrix_local).decompose()
                         fake_child.location = t
                         fake_child.rotation_euler = r.to_euler(fake_child.rotation_mode)
 
@@ -947,7 +947,7 @@ class Model:
                 m = self.__rigid_body_matrix_map.get(rbc.object2, None)
                 if m is None:
                     continue
-            t, r, s = (m * i.matrix_local).decompose()
+            t, r, s = matmul(m, i.matrix_local).decompose()
             i.location = t
             i.rotation_euler = r.to_euler(i.rotation_mode)
 

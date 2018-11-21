@@ -3,17 +3,19 @@
 import bpy
 from bpy.types import Operator
 
+from mmd_tools import register_wrap
 from mmd_tools import bpyutils
 from mmd_tools.core.bone import FnBone
 from mmd_tools.translations import DictionaryEnum
 import mmd_tools.core.model as mmd_model
 
 
+@register_wrap
 class MorphSliderSetup(Operator):
     bl_idname = 'mmd_tools.morph_slider_setup'
     bl_label = 'Morph Slider Setup'
     bl_description = 'Translate MMD morphs of selected object into format usable by Blender'
-    bl_options = {'INTERNAL'}
+    bl_options = {'REGISTER', 'UNDO', 'INTERNAL'}
 
     type = bpy.props.EnumProperty(
         name='Type',
@@ -39,11 +41,12 @@ class MorphSliderSetup(Operator):
         context.scene.objects.active = obj
         return {'FINISHED'}
 
+@register_wrap
 class CleanRiggingObjects(Operator):
     bl_idname = 'mmd_tools.clean_rig'
     bl_label = 'Clean Rig'
     bl_description = 'Delete temporary physics objects of selected object and revert physics to default MMD state'
-    bl_options = {'PRESET'}
+    bl_options = {'REGISTER', 'UNDO', 'INTERNAL'}
 
     def execute(self, context):
         root = mmd_model.Model.findRoot(context.active_object)
@@ -52,11 +55,12 @@ class CleanRiggingObjects(Operator):
         context.scene.objects.active = root
         return {'FINISHED'}
 
+@register_wrap
 class BuildRig(Operator):
     bl_idname = 'mmd_tools.build_rig'
     bl_label = 'Build Rig'
     bl_description = 'Translate physics of selected object into format usable by Blender'
-    bl_options = {'PRESET'}
+    bl_options = {'REGISTER', 'UNDO', 'INTERNAL'}
 
     def execute(self, context):
         root = mmd_model.Model.findRoot(context.active_object)
@@ -65,11 +69,12 @@ class BuildRig(Operator):
         context.scene.objects.active = root
         return {'FINISHED'}
 
+@register_wrap
 class CleanAdditionalTransformConstraints(Operator):
     bl_idname = 'mmd_tools.clean_additional_transform'
     bl_label = 'Clean Additional Transform'
     bl_description = 'Delete shadow bones of selected object and revert bones to default MMD state'
-    bl_options = {'PRESET'}
+    bl_options = {'REGISTER', 'UNDO', 'INTERNAL'}
 
     def execute(self, context):
         obj = context.active_object
@@ -79,11 +84,12 @@ class CleanAdditionalTransformConstraints(Operator):
         context.scene.objects.active = obj
         return {'FINISHED'}
 
+@register_wrap
 class ApplyAdditionalTransformConstraints(Operator):
     bl_idname = 'mmd_tools.apply_additional_transform'
     bl_label = 'Apply Additional Transform'
     bl_description = 'Translate appended bones of selected object for Blender'
-    bl_options = {'PRESET'}
+    bl_options = {'REGISTER', 'UNDO', 'INTERNAL'}
 
     def execute(self, context):
         obj = context.active_object
@@ -93,11 +99,43 @@ class ApplyAdditionalTransformConstraints(Operator):
         context.scene.objects.active = obj
         return {'FINISHED'}
 
+@register_wrap
+class SetupBoneFixedAxes(Operator):
+    bl_idname = 'mmd_tools.bone_fixed_axis_setup'
+    bl_label = 'Setup Bone Fixed Axis'
+    bl_description = 'Setup fixed axis of selected bones'
+    bl_options = {'REGISTER', 'UNDO', 'INTERNAL'}
+
+    type = bpy.props.EnumProperty(
+        name='Type',
+        description='Select type',
+        items = [
+            ('DISABLE', 'Disable', 'Disable MMD fixed axis of selected bones', 0),
+            ('LOAD', 'Load', 'Load/Enable MMD fixed axis of selected bones from their Y-axis or the only rotatable axis', 1),
+            ('APPLY', 'Apply', 'Align bone axes to MMD fixed axis of each bone', 2),
+            ],
+        default='LOAD',
+        )
+
+    def execute(self, context):
+        arm = context.active_object
+        if not arm or arm.type != 'ARMATURE':
+            self.report({'ERROR'}, 'Active object is not an armature object')
+            return {'CANCELLED'}
+
+        if self.type == 'APPLY':
+            FnBone.apply_bone_fixed_axis(arm)
+            FnBone.apply_additional_transformation(arm)
+        else:
+            FnBone.load_bone_fixed_axis(arm, enable=(self.type=='LOAD'))
+        return {'FINISHED'}
+
+@register_wrap
 class SetupBoneLocalAxes(Operator):
     bl_idname = 'mmd_tools.bone_local_axes_setup'
     bl_label = 'Setup Bone Local Axes'
     bl_description = 'Setup local axes of each bone'
-    bl_options = {'INTERNAL'}
+    bl_options = {'REGISTER', 'UNDO', 'INTERNAL'}
 
     type = bpy.props.EnumProperty(
         name='Type',
@@ -118,16 +156,17 @@ class SetupBoneLocalAxes(Operator):
 
         if self.type == 'APPLY':
             FnBone.apply_bone_local_axes(arm)
-            #FnBone.apply_additional_transformation(arm)
+            FnBone.apply_additional_transformation(arm)
         else:
             FnBone.load_bone_local_axes(arm, enable=(self.type=='LOAD'))
         return {'FINISHED'}
 
+@register_wrap
 class CreateMMDModelRoot(Operator):
     bl_idname = 'mmd_tools.create_mmd_model_root_object'
     bl_label = 'Create a MMD Model Root Object'
     bl_description = 'Create a MMD model root object with a basic armature'
-    bl_options = {'PRESET'}
+    bl_options = {'REGISTER', 'UNDO'}
 
     name_j = bpy.props.StringProperty(
         name='Name',
@@ -154,6 +193,7 @@ class CreateMMDModelRoot(Operator):
         vm = context.window_manager
         return vm.invoke_props_dialog(self)
 
+@register_wrap
 class ConvertToMMDModel(Operator):
     bl_idname = 'mmd_tools.convert_to_mmd_model'
     bl_label = 'Convert to a MMD Model'
@@ -169,15 +209,23 @@ class ConvertToMMDModel(Operator):
             ],
         default='DIFFUSE',
         )
-
     edge_threshold = bpy.props.FloatProperty(
         name='Edge Threshold',
         description='MMD toon edge will not be enabled if freestyle line color alpha less than this value',
         min=0,
-        max=1,
+        max=1.001,
         precision=3,
         step=0.1,
         default=0.1,
+        )
+    edge_alpha_min = bpy.props.FloatProperty(
+        name='Minimum Edge Alpha',
+        description='Minimum alpha of MMD toon edge color',
+        min=0,
+        max=1,
+        precision=3,
+        step=0.1,
+        default=0.5,
         )
 
     @classmethod
@@ -247,36 +295,40 @@ class ConvertToMMDModel(Operator):
         for m in {x for mesh in meshes for x in mesh.data.materials if x}:
             mmd_material = m.mmd_material
 
-            diffuse = m.diffuse_color[:]
+            map_diffuse = next((s.blend_type for s in m.texture_slots if s and s.use_map_color_diffuse), None)
+            use_diffuse = map_diffuse in {None, 'MULTIPLY'}
+            diffuse = m.diffuse_color*min(1.0, m.diffuse_intensity/0.8) if use_diffuse else (1.0, 1.0, 1.0)
             mmd_material.diffuse_color = diffuse
             if self.ambient_color_source == 'MIRROR':
                 mmd_material.ambient_color = m.mirror_color
             else:
                 mmd_material.ambient_color = [0.5*c for c in diffuse]
-            mmd_material.alpha = m.alpha
-            mmd_material.specular_color = m.specular_color
+
+            map_alpha = next((s.blend_type for s in m.texture_slots if s and s.use_map_alpha), None)
+            if m.use_transparency and map_alpha in {None, 'MULTIPLY'}:
+                mmd_material.alpha = m.alpha
+
+            mmd_material.specular_color = m.specular_color*min(1.0, m.specular_intensity/0.8)
             mmd_material.shininess = m.specular_hardness
             mmd_material.is_double_sided = m.game_settings.use_backface_culling
             mmd_material.enabled_self_shadow_map = m.use_cast_buffer_shadows and m.alpha > 1e-3
             mmd_material.enabled_self_shadow = m.use_shadows
             if hasattr(m, 'line_color'): # freestyle line color
                 line_color = list(m.line_color)
-                if line_color[3] < self.edge_threshold:
-                    mmd_material.enabled_toon_edge = False
-                    mmd_material.edge_color[:3] = line_color[:3] # skip alpha
-                else:
-                    mmd_material.enabled_toon_edge = True
-                    mmd_material.edge_color = line_color
+                mmd_material.enabled_toon_edge = line_color[3] >= self.edge_threshold
+                mmd_material.edge_color = line_color[:3] + [max(line_color[3], self.edge_alpha_min)]
 
         from mmd_tools.operators.display_item import DisplayItemQuickSetup
         DisplayItemQuickSetup.load_bone_groups(root.mmd_root, armature)
         rig.initialDisplayFrames(reset=False) # ensure default frames
         DisplayItemQuickSetup.load_facial_items(root.mmd_root)
 
+@register_wrap
 class TranslateMMDModel(Operator):
     bl_idname = 'mmd_tools.translate_mmd_model'
     bl_label = 'Translate a MMD Model'
     bl_description = 'Translate Japanese names of a MMD model'
+    bl_options = {'REGISTER', 'UNDO', 'INTERNAL'}
 
     dictionary = bpy.props.EnumProperty(
         name='Dictionary',

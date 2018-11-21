@@ -11,6 +11,7 @@ from bpy.types import Operator
 from bpy.types import OperatorFileListElement
 from bpy_extras.io_utils import ImportHelper, ExportHelper
 
+from mmd_tools import register_wrap
 from mmd_tools import auto_scene_setup
 from mmd_tools.utils import makePmxBoneMap
 from mmd_tools.core.camera import MMDCamera
@@ -59,12 +60,12 @@ def _update_types(cls, prop):
     if types != cls.types:
         cls.types = types # trigger update
 
-
+@register_wrap
 class ImportPmx(Operator, ImportHelper):
     bl_idname = 'mmd_tools.import_model'
-    bl_label = 'Import Model file (.pmd, .pmx)'
-    bl_description = 'Import Model file(s) (.pmd, .pmx)'
-    bl_options = {'PRESET'}
+    bl_label = 'Import Model File (.pmd, .pmx)'
+    bl_description = 'Import model file(s) (.pmd, .pmx)'
+    bl_options = {'REGISTER', 'UNDO', 'PRESET'}
 
     files = bpy.props.CollectionProperty(type=OperatorFileListElement, options={'HIDDEN', 'SKIP_SAVE'})
     directory = bpy.props.StringProperty(maxlen=1024, subtype='FILE_PATH', options={'HIDDEN', 'SKIP_SAVE'})
@@ -104,6 +105,11 @@ class ImportPmx(Operator, ImportHelper):
     fix_IK_links = bpy.props.BoolProperty(
         name='Fix IK Links',
         description='Fix IK links to be blender suitable',
+        default=False,
+        )
+    apply_bone_fixed_axis = bpy.props.BoolProperty(
+        name='Apply Bone Fixed Axis',
+        description="Apply bone's fixed axis to be blender suitable",
         default=False,
         )
     rename_bones = bpy.props.BoolProperty(
@@ -180,6 +186,7 @@ class ImportPmx(Operator, ImportHelper):
                 clean_model=self.clean_model,
                 remove_doubles=self.remove_doubles,
                 fix_IK_links=self.fix_IK_links,
+                apply_bone_fixed_axis=self.apply_bone_fixed_axis,
                 rename_LR_bones=self.rename_bones,
                 use_underscore=self.use_underscore,
                 translator=self.__translator,
@@ -198,12 +205,12 @@ class ImportPmx(Operator, ImportHelper):
 
         return {'FINISHED'}
 
-
+@register_wrap
 class ImportVmd(Operator, ImportHelper):
     bl_idname = 'mmd_tools.import_vmd'
-    bl_label = 'Import VMD file (.vmd)'
-    bl_description = 'Import a VMD file (.vmd)'
-    bl_options = {'PRESET'}
+    bl_label = 'Import VMD File (.vmd)'
+    bl_description = 'Import a VMD file to selected objects (.vmd)'
+    bl_options = {'REGISTER', 'UNDO', 'PRESET'}
 
     filename_ext = '.vmd'
     filter_glob = bpy.props.StringProperty(default='*.vmd', options={'HIDDEN'})
@@ -313,12 +320,12 @@ class ImportVmd(Operator, ImportHelper):
         context.scene.frame_set(context.scene.frame_current)
         return {'FINISHED'}
 
-
+@register_wrap
 class ImportVpd(Operator, ImportHelper):
     bl_idname = 'mmd_tools.import_vpd'
-    bl_label = 'Import VPD file (.vpd)'
+    bl_label = 'Import VPD File (.vpd)'
     bl_description = "Import VPD file(s) to selected rig's pose library (.vpd)"
-    bl_options = {'PRESET'}
+    bl_options = {'REGISTER', 'UNDO', 'PRESET'}
 
     files = bpy.props.CollectionProperty(type=OperatorFileListElement, options={'HIDDEN', 'SKIP_SAVE'})
     directory = bpy.props.StringProperty(maxlen=1024, subtype='FILE_PATH', options={'HIDDEN', 'SKIP_SAVE'})
@@ -409,10 +416,10 @@ class ImportVpd(Operator, ImportHelper):
                 importer.assign(i)
         return {'FINISHED'}
 
-
+@register_wrap
 class ExportPmx(Operator, ExportHelper):
     bl_idname = 'mmd_tools.export_pmx'
-    bl_label = 'Export PMX file (.pmx)'
+    bl_label = 'Export PMX File (.pmx)'
     bl_description = 'Export selected MMD model(s) to PMX file(s) (.pmx)'
     bl_options = {'PRESET'}
 
@@ -543,10 +550,10 @@ class ExportPmx(Operator, ExportHelper):
 
         return {'FINISHED'}
 
-
+@register_wrap
 class ExportVmd(Operator, ExportHelper):
     bl_idname = 'mmd_tools.export_vmd'
-    bl_label = 'Export VMD file (.vmd)'
+    bl_label = 'Export VMD File (.vmd)'
     bl_description = 'Export motion data of active object to a VMD file (.vmd)'
     bl_options = {'PRESET'}
 
@@ -578,7 +585,7 @@ class ExportVmd(Operator, ExportHelper):
 
         if obj.mmd_type == 'ROOT':
             return True
-        if obj.mmd_type == 'NONE' and obj.type in {'MESH', 'ARMATURE'}:
+        if obj.mmd_type == 'NONE' and (obj.type == 'ARMATURE' or getattr(obj.data, 'shape_keys', None)):
             return True
         if MMDCamera.isMMDCamera(obj) or MMDLamp.isMMDLamp(obj):
             return True
@@ -599,7 +606,7 @@ class ExportVmd(Operator, ExportHelper):
             params['mesh'] = rig.firstMesh()
             params['armature'] = rig.armature()
             params['model_name'] = obj.mmd_root.name or obj.name
-        elif obj.type == 'MESH':
+        elif getattr(obj.data, 'shape_keys', None):
             params['mesh'] = obj
             params['model_name'] = obj.name
         elif obj.type == 'ARMATURE':
@@ -623,10 +630,10 @@ class ExportVmd(Operator, ExportHelper):
 
         return {'FINISHED'}
 
-
+@register_wrap
 class ExportVpd(Operator, ExportHelper):
     bl_idname = 'mmd_tools.export_vpd'
-    bl_label = 'Export VPD file (.vpd)'
+    bl_label = 'Export VPD File (.vpd)'
     bl_description = 'Export to VPD file(s) (.vpd)'
     bl_description = "Export active rig's pose library to VPD file(s) (.vpd)"
     bl_options = {'PRESET'}

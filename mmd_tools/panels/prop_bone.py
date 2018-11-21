@@ -2,6 +2,9 @@
 
 from bpy.types import Panel
 
+from mmd_tools import register_wrap
+
+@register_wrap
 class MMDBonePanel(Panel):
     bl_idname = 'BONE_PT_mmd_tools_bone'
     bl_label = 'MMD Bone Tools'
@@ -22,7 +25,7 @@ class MMDBonePanel(Panel):
 
         layout = self.layout
         if pose_bone.is_mmd_shadow_bone:
-            layout.label('MMD Shadow Bone!', icon='INFO')
+            layout.label(text='MMD Shadow Bone!', icon='INFO')
             return
 
         mmd_bone = pose_bone.mmd_bone
@@ -46,7 +49,11 @@ class MMDBonePanel(Panel):
         row.prop(mmd_bone, 'ik_rotation_constraint')
 
         c = layout.column(align=True)
-        c.prop(mmd_bone, 'enabled_fixed_axis')
+        row = c.row(align=True)
+        row.prop(mmd_bone, 'enabled_fixed_axis')
+        row.operator('mmd_tools.bone_fixed_axis_setup', text='', icon='X').type = 'DISABLE'
+        row.operator('mmd_tools.bone_fixed_axis_setup', text='Load').type = 'LOAD'
+        row.operator('mmd_tools.bone_fixed_axis_setup', text='Apply').type = 'APPLY'
         row = c.row()
         row.active = mmd_bone.enabled_fixed_axis
         row.column(align=True).prop(mmd_bone, 'fixed_axis', text='')

@@ -3,6 +3,7 @@
 from bpy.types import PropertyGroup
 from bpy.props import StringProperty, IntProperty, BoolProperty, FloatProperty, FloatVectorProperty
 
+from mmd_tools import register_wrap
 from mmd_tools.core.bone import FnBone
 
 def _updateMMDBoneAdditionalTransform(prop, context):
@@ -38,6 +39,7 @@ def _setAdditionalTransformBone(prop, value):
     bone = FnBone(pose_bone)
     prop['additional_transform_bone_id'] = bone.bone_id
 
+@register_wrap
 class MMDBone(PropertyGroup):
     name_j = StringProperty(
         name='Name',
@@ -86,6 +88,8 @@ class MMDBone(PropertyGroup):
         description='Fixed axis',
         subtype='XYZ',
         size=3,
+        precision=3,
+        step=0.1, # 0.1 / 100
         default=[0, 0, 0],
         )
 
@@ -100,6 +104,8 @@ class MMDBone(PropertyGroup):
         description='Local x-axis',
         subtype='XYZ',
         size=3,
+        precision=3,
+        step=0.1,
         default=[1, 0, 0],
         )
 
@@ -108,6 +114,8 @@ class MMDBone(PropertyGroup):
         description='Local z-axis',
         subtype='XYZ',
         size=3,
+        precision=3,
+        step=0.1,
         default=[0, 0, 1],
         )
 

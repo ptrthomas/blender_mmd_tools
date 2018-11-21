@@ -5,14 +5,16 @@ import bpy
 from bpy.types import PropertyGroup
 from bpy.props import BoolProperty, CollectionProperty, FloatProperty, IntProperty, StringProperty, EnumProperty
 
-import mmd_tools.core.model as mmd_model
+from mmd_tools import register_wrap
+from mmd_tools import utils
 from mmd_tools.core.material import FnMaterial
+from mmd_tools.core.sdef import FnSDEF
 from mmd_tools.properties.morph import BoneMorph
 from mmd_tools.properties.morph import MaterialMorph
 from mmd_tools.properties.morph import VertexMorph
 from mmd_tools.properties.morph import UVMorph
 from mmd_tools.properties.morph import GroupMorph
-from mmd_tools import utils
+import mmd_tools.core.model as mmd_model
 
 #===========================================
 # Callback functions
@@ -35,7 +37,15 @@ def _toggleUseSphereTexture(self, context):
         for m in i.data.materials:
             if m is None:
                 continue
-            FnMaterial(m).use_sphere_texture(use_sphere)
+            FnMaterial(m).use_sphere_texture(use_sphere, i)
+
+def _toggleUseSDEF(self, context):
+    root = self.id_data
+    rig = mmd_model.Model(root)
+    mute_sdef = not self.use_sdef
+    for i in rig.meshes():
+        if FnSDEF.SHAPEKEY_NAME in getattr(i.data.shape_keys, 'key_blocks', ()):
+            i.data.shape_keys.key_blocks[FnSDEF.SHAPEKEY_NAME].mute = mute_sdef
 
 def _toggleVisibilityOfMeshes(self, context):
     root = self.id_data
@@ -110,7 +120,7 @@ def _setActiveRigidbodyObject(prop, v):
 def _getActiveRigidbodyObject(prop):
     objects = bpy.context.scene.objects
     active_obj = objects.active
-    if active_obj and mmd_model.isRigidBodyObject(active_obj):
+    if mmd_model.isRigidBodyObject(active_obj):
         prop['active_rigidbody_object_index'] = objects.find(active_obj.name)
     return prop.get('active_rigidbody_object_index', 0)
 
@@ -124,7 +134,7 @@ def _setActiveJointObject(prop, v):
 def _getActiveJointObject(prop):
     objects = bpy.context.scene.objects
     active_obj = objects.active
-    if active_obj and mmd_model.isJointObject(active_obj):
+    if mmd_model.isJointObject(active_obj):
         prop['active_joint_object_index'] = objects.find(active_obj.name)
     return prop.get('active_joint_object_index', 0)
 
@@ -157,6 +167,7 @@ def _getActiveMeshObject(prop):
 # Property classes
 #===========================================
 
+@register_wrap
 class MMDDisplayItem(PropertyGroup):
     """ PMX 表示項目(表示枠内の1項目)
     """
@@ -182,6 +193,7 @@ class MMDDisplayItem(PropertyGroup):
         default='vertex_morphs',
         )
 
+@register_wrap
 class MMDDisplayItemFrame(PropertyGroup):
     """ PMX 表示枠
 
@@ -202,7 +214,7 @@ class MMDDisplayItemFrame(PropertyGroup):
         )
 
     ## 表示項目のリスト
-    items = CollectionProperty(
+    data = CollectionProperty(
         name='Display Items',
         type=MMDDisplayItem,
         )
@@ -215,6 +227,7 @@ class MMDDisplayItemFrame(PropertyGroup):
         )
 
 
+@register_wrap
 class MMDRoot(PropertyGroup):
     """ MMDモデルデータ
 
@@ -298,6 +311,13 @@ class MMDRoot(PropertyGroup):
         name='Use Sphere Texture',
         description='Use sphere texture',
         update=_toggleUseSphereTexture,
+        default=True,
+        )
+
+    use_sdef = BoolProperty(
+        name='Use SDEF',
+        description='Use SDEF',
+        update=_toggleUseSDEF,
         default=True,
         )
 
